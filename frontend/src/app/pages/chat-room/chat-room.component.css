@@ -1,0 +1,4 @@
+/* Chat Room Page styles (inherits global chat styling from styles.css) */
+:host {
+  display: contents;
+}

@@ -1,0 +1,60 @@
+@if (show) {
+  <div class="attachment-modal-overlay" (click)="onClose()">
+    <div class="attachment-modal-card" (click)="$event.stopPropagation()">
+      <div class="attachment-modal-header">
+        <div class="attachment-modal-title">
+          <span>{{ stagedFileIsImage ? '🖼️' : stagedFileIcon }}</span> Send Attachment
+        </div>
+        <button type="button" class="attachment-modal-close" (click)="onClose()">✕</button>
+      </div>
+
+      @if (stagedFileIsImage && stagedFilePreviewUrl) {
+        <div class="attachment-preview-box">
+          <img class="attachment-preview-img" [src]="stagedFilePreviewUrl" alt="Preview" />
+        </div>
+      } @else {
+        <div class="attachment-file-preview">
+          <div class="attachment-file-icon">{{ stagedFileIcon }}</div>
+          <div class="attachment-file-details">
+            <div class="attachment-file-name">{{ stagedFileName }}</div>
+            <div class="attachment-file-meta">{{ stagedFileMetaText }}</div>
+          </div>
+        </div>
+      }
+
+      <div class="attachment-privacy-badge">
+        🔒 <span>End-to-End Encrypted. Stored only in RAM/cache, never in database.</span>
+      </div>
+
+      @if (error) {
+        <div class="error">{{ error }}</div>
+      }
+
+      <div class="attachment-modal-actions">
+        <button
+          type="button"
+          class="attachment-btn-cancel"
+          [disabled]="isSending"
+          (click)="onClose()"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="attachment-btn-send"
+          [disabled]="isSending"
+          (click)="onSend()"
+        >
+          @if (isSending) {
+            <span class="btn-loader">
+              <span class="role-spinner"></span>
+              <span>Encrypting…</span>
+            </span>
+          } @else {
+            <span>Send</span>
+          }
+        </button>
+      </div>
+    </div>
+  </div>
+}

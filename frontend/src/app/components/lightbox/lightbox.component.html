@@ -1,0 +1,22 @@
+@if (show) {
+  <div class="attachment-lightbox-overlay" (click)="onClose()">
+    <div class="attachment-lightbox-topbar" (click)="$event.stopPropagation()">
+      <div class="attachment-lightbox-title">{{ title }}</div>
+      <div class="attachment-lightbox-actions">
+        <button
+          type="button"
+          class="attachment-lightbox-save-btn"
+          (click)="onDownload()"
+        >
+          📥 Save to Device
+        </button>
+        <button type="button" class="attachment-lightbox-close-btn" (click)="onClose()">
+          ✕
+        </button>
+      </div>
+    </div>
+    <div class="attachment-lightbox-body">
+      <img class="attachment-lightbox-img" [src]="imageUrl" [alt]="title" />
+    </div>
+  </div>
+}

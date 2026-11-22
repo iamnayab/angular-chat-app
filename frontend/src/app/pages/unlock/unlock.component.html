@@ -1,0 +1,55 @@
+<section id="joinPanel" class="join-card">
+  <div class="eyebrow">EXCLUSIVE ACCESS ONLY</div>
+  <h1>Room</h1>
+  <p class="intro">Enter the 4-digit Room ID and Password to unlock your conversation.</p>
+
+  <form (ngSubmit)="onUnlockSubmit()">
+    <div class="pin-grid">
+      <div class="pin-field">
+        <label for="roomId">ROOM ID (4-DIGIT)</label>
+        <input
+          id="roomId"
+          name="roomId"
+          type="password"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="4"
+          placeholder="••••"
+          required
+          autocomplete="off"
+          [(ngModel)]="roomIdInput"
+        />
+      </div>
+      <div class="pin-field">
+        <label for="roomPassword">PASSWORD (4-DIGIT)</label>
+        <input
+          id="roomPassword"
+          name="roomPassword"
+          type="password"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="4"
+          placeholder="••••"
+          required
+          autocomplete="off"
+          [(ngModel)]="passwordInput"
+        />
+      </div>
+    </div>
+
+    <button class="primary" type="submit" [disabled]="isVerifying">
+      @if (isVerifying) {
+        <span class="btn-loader">
+          <span class="role-spinner"></span>
+          <span>Verifying…</span>
+        </span>
+      } @else {
+        <span>Unlock Room →</span>
+      }
+    </button>
+
+    @if (joinError) {
+      <div class="error" role="alert">{{ joinError }}</div>
+    }
+  </form>
+</section>

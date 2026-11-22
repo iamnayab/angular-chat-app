@@ -1,0 +1,49 @@
+<div class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-badge">🔒 VERIFIED</div>
+    <h2>Who is joining?</h2>
+    <p class="modal-desc">
+      Please choose your identity so your chats appear on the right side and your partner's appear on the left.
+    </p>
+
+    <div class="role-grid">
+      <button
+        type="button"
+        class="role-card role-he"
+        [disabled]="isJoiningRole"
+        [style.opacity]="isJoiningRole && roleJoiningTarget !== 'he' ? '0.4' : '1'"
+        (click)="onChooseRole('he')"
+      >
+        @if (isJoiningRole && roleJoiningTarget === 'he') {
+          <span class="btn-loader">
+            <span class="role-spinner"></span>
+            <span>Opening Harry…</span>
+          </span>
+        } @else {
+          <span class="role-name">Harry</span>
+        }
+      </button>
+
+      <button
+        type="button"
+        class="role-card role-she"
+        [disabled]="isJoiningRole"
+        [style.opacity]="isJoiningRole && roleJoiningTarget !== 'she' ? '0.4' : '1'"
+        (click)="onChooseRole('she')"
+      >
+        @if (isJoiningRole && roleJoiningTarget === 'she') {
+          <span class="btn-loader">
+            <span class="role-spinner"></span>
+            <span>Opening Elira…</span>
+          </span>
+        } @else {
+          <span class="role-name">Elira</span>
+        }
+      </button>
+    </div>
+
+    @if (identityError) {
+      <div class="error" role="alert">{{ identityError }}</div>
+    }
+  </div>
+</div>

@@ -1,0 +1,4 @@
+/* Unlock Page specific styles (inherits core card styles from styles.css) */
+:host {
+  display: block;
+}
