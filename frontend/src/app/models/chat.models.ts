@@ -1,16 +1,5 @@
 export type Role = 'he' | 'she';
 
-export interface EncryptedPayload {
-  id: string;
-  roomId: string;
-  iv: string;
-  ciphertext: string;
-  senderRole: Role;
-  sentAt: number;
-  seen?: boolean;
-  editedAt?: number;
-}
-
 export interface AttachmentMeta {
   id: string;
   fileName: string;
@@ -30,6 +19,22 @@ export interface AttachmentState {
   isComplete: boolean;
   blobUrl?: string;
   error?: string;
+}
+
+export interface EncryptedPayload {
+  id: string;
+  roomId: string;
+  iv: string;
+  ciphertext: string;
+  senderRole: Role;
+  sentAt: number;
+  seen?: boolean;
+  editedAt?: number;
+  isAttachment?: boolean;
+  attachment?: {
+    meta: AttachmentMeta;
+    data?: string;
+  };
 }
 
 export interface ReplyQuote {

@@ -346,64 +346,6 @@ function setupSocketIO(httpServer) {
       }
     });
 
-    /**
-     * Manual Ring Feature: Triggers continuous ringing & vibration on partner's phone
-     */
-    socket.on("ring-partner", async (reply = () => {}) => {
-      try {
-        const role = socket.data.role;
-        const roomId = socket.data.roomId || "0202";
-
-        if (!role || !roomId) {
-          if (typeof reply === "function") reply({ ok: false, error: "Not in room." });
-          return;
-        }
-
-        // Rate limit: 1 ring per 15 seconds
-        const rateLimitCheck = checkRateLimit(`ring:${role}`, 1, 15000);
-        if (!rateLimitCheck.allowed) {
-          if (typeof reply === "function") {
-            reply({ ok: false, error: `Please wait ${rateLimitCheck.retryAfterSeconds}s before ringing again.` });
-          }
-          return;
-        }
-
-        const senderName = role === "he" ? "Harry" : "Elira";
-        const partnerRole = role === "he" ? "she" : "he";
-        const partnerName = role === "he" ? "Elira" : "Harry";
-
-        console.log(`🔔 [Socket Ring] ${senderName} ringing ${partnerName}'s phone in room "${roomId}"...`);
-
-        // Relay to partner's web browser if currently active
-        socket.to(roomId).emit("incoming-ring", {
-          fromRole: role,
-          fromName: senderName,
-          timestamp: Date.now()
-        });
-
-        // Send high-priority ringing push notification to partner's Android phone
-        const pushResult = await sendPushNotification({
-          targetRole: partnerRole,
-          roomId,
-          type: "ring",
-          senderName,
-          senderRole: role,
-          title: `🔔 Incoming Ring from ${senderName}`,
-          body: `${senderName} is ringing your phone. Tap to answer.`
-        });
-
-        if (typeof reply === "function") {
-          reply({
-            ok: true,
-            message: `Ringing ${partnerName}'s phone...`,
-            pushDelivered: pushResult.ok
-          });
-        }
-      } catch (err) {
-        console.error("❌ ring-partner error:", err.message);
-        if (typeof reply === "function") reply({ ok: false, error: "Server error triggering ring." });
-      }
-    });
 
     /**
      * Realtime Typing Indicator Relay

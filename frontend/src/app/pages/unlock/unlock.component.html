@@ -8,6 +8,7 @@
       <div class="pin-field">
         <label for="roomId">ROOM ID (4-DIGIT)</label>
         <input
+          #roomIdInputRef
           id="roomId"
           name="roomId"
           type="password"
@@ -18,11 +19,14 @@
           required
           autocomplete="off"
           [(ngModel)]="roomIdInput"
+          (input)="onRoomIdInput()"
+          (keydown)="onRoomIdKeyDown($event)"
         />
       </div>
       <div class="pin-field">
         <label for="roomPassword">PASSWORD (4-DIGIT)</label>
         <input
+          #passwordInputRef
           id="roomPassword"
           name="roomPassword"
           type="password"

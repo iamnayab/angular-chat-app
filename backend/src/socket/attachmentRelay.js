@@ -1,38 +1,35 @@
 /**
- * attachmentRelay.js - Dedicated Ephemeral Attachment & Picture Relay
+ * attachmentRelay.js - Dedicated Attachment & Picture Relay with Supabase Storage Persistence
  * 
- * STRICT PRIVACY & NO DATABASE STORAGE:
- * - Attachments (pictures, files, audio, video) are relayed in-memory via WebSockets.
- * - ZERO DATABASE WRITES: Never writes to PostgreSQL, SQLite, or chat_data.json.
- * - ZERO DISK STORAGE: Files are never saved to the server's filesystem.
- * - Ephemeral RAM buffer with 5-minute auto-expiry TTL in case of brief network reconnection.
- * - Memory is immediately freed once recipient acknowledges receipt.
+ * Flow:
+ * 1. Chunks are relayed in real-time via WebSockets.
+ * 2. On completion ("attachment:complete"), the full encrypted binary/base64 is saved 
+ *    permanently in Supabase PostgreSQL (attachments table).
+ * 3. Ephemeral RAM buffer is freed once transfer finishes or upon recipient ack.
  */
 
+const { saveAttachment } = require("../database/database");
+
 // Active in-memory transfers: Map<id, { meta, chunks, expiresAt, roomId, senderRole }>
-const ephemeralTransfers = new Map();
+const activeTransfers = new Map();
 
 // Max allowed file size: 25 MB
 const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024;
-// Transfer TTL: 5 minutes
+// Transfer TTL: 5 minutes for in-progress chunk streaming
 const TRANSFER_TTL_MS = 5 * 60 * 1000;
 
-// Periodic cleanup of expired in-memory transfers
+// Periodic cleanup of stale in-progress transfers
 setInterval(() => {
   const now = Date.now();
-  for (const [id, item] of ephemeralTransfers.entries()) {
+  for (const [id, item] of activeTransfers.entries()) {
     if (now > item.expiresAt) {
-      ephemeralTransfers.delete(id);
+      activeTransfers.delete(id);
     }
   }
 }, 60 * 1000);
 
 /**
  * Registers attachment relay handlers for an authenticated socket.
- * 
- * @param {import("socket.io").Server} io 
- * @param {import("socket.io").Socket} socket 
- * @param {Map<string, string>} roomMembers 
  */
 function initAttachmentRelay(io, socket, roomMembers) {
 
@@ -59,12 +56,12 @@ function initAttachmentRelay(io, socket, roomMembers) {
     }
 
     if (fileSize > MAX_ATTACHMENT_SIZE) {
-      return reply({ ok: false, error: "File exceeds 25 MB limit for ephemeral transfer." });
+      return reply({ ok: false, error: "File exceeds 25 MB limit." });
     }
 
     const validTotalChunks = Math.max(1, parseInt(totalChunks, 10) || 1);
 
-    ephemeralTransfers.set(id, {
+    activeTransfers.set(id, {
       meta: {
         id,
         fileName: String(fileName).slice(0, 255),
@@ -110,7 +107,7 @@ function initAttachmentRelay(io, socket, roomMembers) {
       return;
     }
 
-    const transfer = ephemeralTransfers.get(id);
+    const transfer = activeTransfers.get(id);
     if (transfer && transfer.roomId === ctx.roomId) {
       transfer.chunks.set(chunkIndex, data);
       transfer.expiresAt = Date.now() + TRANSFER_TTL_MS;
@@ -129,20 +126,47 @@ function initAttachmentRelay(io, socket, roomMembers) {
     }
   });
 
-  // 3. Complete Attachment Transfer
-  socket.on("attachment:complete", (payload, reply = () => {}) => {
+  // 3. Complete Attachment Transfer & Save Permanently to Supabase Database
+  socket.on("attachment:complete", async (payload, reply = () => {}) => {
     const ctx = getAuthenticatedContext();
     if (!ctx) return;
 
     const { id } = payload || {};
     if (!id) return;
 
-    const transfer = ephemeralTransfers.get(id);
+    const transfer = activeTransfers.get(id);
     if (transfer && transfer.roomId === ctx.roomId) {
       transfer.isComplete = true;
-      console.log(`✅ [Attachment Relay] Transfer completed: ${id} (${transfer.chunks.size}/${transfer.meta.totalChunks} chunks in RAM).`);
+
+      // Reconstruct the full base64 encoded encrypted payload
+      let fullBase64 = "";
+      for (let i = 0; i < transfer.meta.totalChunks; i++) {
+        const chunk = transfer.chunks.get(i);
+        if (chunk) fullBase64 += chunk;
+      }
+
+      // Save permanently to Supabase PostgreSQL Database!
+      try {
+        await saveAttachment({
+          id: transfer.meta.id,
+          roomId: transfer.roomId,
+          senderRole: transfer.senderRole,
+          fileName: transfer.meta.fileName,
+          fileType: transfer.meta.fileType,
+          fileSize: transfer.meta.fileSize,
+          totalChunks: transfer.meta.totalChunks,
+          isImage: transfer.meta.isImage,
+          iv: transfer.meta.iv,
+          data: fullBase64,
+          createdAt: transfer.meta.sentAt
+        });
+        console.log(`💾 [Supabase Storage] Attachment "${transfer.meta.fileName}" (${id}) permanently stored in database.`);
+      } catch (err) {
+        console.error("❌ Failed to save attachment to database:", err.message);
+      }
     }
 
+    // Notify room partner that transfer is complete
     socket.to(ctx.roomId).emit("attachment:complete", {
       id,
       senderRole: ctx.role
@@ -153,17 +177,17 @@ function initAttachmentRelay(io, socket, roomMembers) {
     }
   });
 
-  // 4. Recipient Acknowledges Receipt -> free RAM immediately
+  // 4. Recipient Acknowledges Receipt -> free RAM buffer
   socket.on("attachment:ack", (payload) => {
     const ctx = getAuthenticatedContext();
     if (!ctx) return;
 
     const { id } = payload || {};
-    if (id && ephemeralTransfers.has(id)) {
-      const transfer = ephemeralTransfers.get(id);
+    if (id && activeTransfers.has(id)) {
+      const transfer = activeTransfers.get(id);
       if (transfer.roomId === ctx.roomId) {
-        ephemeralTransfers.delete(id);
-        console.log(`🧹 [Attachment Relay] RAM freed for attachment ${id} after recipient ack.`);
+        activeTransfers.delete(id);
+        console.log(`🧹 [Attachment Relay] Stream RAM buffer freed for attachment ${id}.`);
       }
     }
   });
@@ -174,8 +198,8 @@ function initAttachmentRelay(io, socket, roomMembers) {
     if (!ctx) return;
 
     const { id } = payload || {};
-    if (id && ephemeralTransfers.has(id)) {
-      ephemeralTransfers.delete(id);
+    if (id && activeTransfers.has(id)) {
+      activeTransfers.delete(id);
       socket.to(ctx.roomId).emit("attachment:cancelled", { id });
       console.log(`🚫 [Attachment Relay] Transfer ${id} cancelled and cleaned from RAM.`);
     }
@@ -184,14 +208,14 @@ function initAttachmentRelay(io, socket, roomMembers) {
 
 function clearRoomAttachments(roomId) {
   let count = 0;
-  for (const [id, item] of ephemeralTransfers.entries()) {
+  for (const [id, item] of activeTransfers.entries()) {
     if (item.roomId === roomId) {
-      ephemeralTransfers.delete(id);
+      activeTransfers.delete(id);
       count++;
     }
   }
   if (count > 0) {
-    console.log(`🧹 [Attachment Relay] Cleared ${count} in-memory attachments for room ${roomId}.`);
+    console.log(`🧹 [Attachment Relay] Cleared ${count} active stream buffers for room ${roomId}.`);
   }
 }
 

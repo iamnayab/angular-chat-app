@@ -9,9 +9,9 @@ const express = require("express");
 const router = express.Router();
 
 const { getRoomMessages, getDatabaseStatus, saveFcmToken } = require("../database/database");
-const { getRoomMembers, getIO } = require("../socket");
+const { getRoomMembers } = require("../socket");
 const { sendPushNotification } = require("../services/fcmService");
-const { checkRateLimit, verifyRoomCredentials } = require("../utils/security");
+const { verifyRoomCredentials } = require("../utils/security");
 
 /**
  * All API endpoint paths defined in one single object
@@ -20,8 +20,7 @@ const API_PATHS = {
   STATUS: "/status",
   DB_STATUS: "/db-status",
   FCM_REGISTER: "/fcm/register",
-  FCM_TEST: "/fcm/test",
-  RING: "/ring"
+  FCM_TEST: "/fcm/test"
 };
 
 // -------------------------------------------------------------
@@ -39,7 +38,7 @@ router.get(API_PATHS.STATUS, (req, res) => {
   });
 });
 
-// GET /api/db-status - Database connection & message statistics
+// GET /api/db-status - Database (Supabase / PostgreSQL) connection & statistics
 router.get(API_PATHS.DB_STATUS, async (req, res) => {
   const dbStatus = getDatabaseStatus();
   const roomMembers = getRoomMembers();
@@ -52,7 +51,7 @@ router.get(API_PATHS.DB_STATUS, async (req, res) => {
   }
 
   res.json({
-    activeDatabase: dbStatus.usePostgres ? "PostgreSQL (Render Cloud)" : "Local JSON File Fallback",
+    activeDatabase: dbStatus.usePostgres ? "PostgreSQL (Supabase Cloud)" : "Local JSON File Fallback",
     hasDatabaseUrlConfigured: dbStatus.hasDatabaseUrl,
     usePostgres: dbStatus.usePostgres,
     lastDbError: dbStatus.lastDbError || null,
@@ -102,7 +101,7 @@ router.post(API_PATHS.FCM_REGISTER, async (req, res) => {
 // POST /api/fcm/test - Test push notification endpoint
 router.post(API_PATHS.FCM_TEST, async (req, res) => {
   try {
-    const { roomId, roomPassword, role, type = "message" } = req.body || {};
+    const { roomId, roomPassword, role } = req.body || {};
     const targetRoomId = String(roomId || "0202").trim();
     const targetRole = String(role || "").trim().toLowerCase();
 
@@ -112,76 +111,18 @@ router.post(API_PATHS.FCM_TEST, async (req, res) => {
 
     const senderRole = targetRole === "he" ? "she" : "he";
     const senderName = senderRole === "he" ? "Harry" : "Elira";
-    const isRing = (type === "ring");
 
     const result = await sendPushNotification({
       targetRole,
       roomId: targetRoomId,
-      type: isRing ? "ring" : "message",
+      type: "message",
       senderName,
       senderRole,
-      title: isRing ? `🔔 Test Ring from ${senderName}` : `Test Message from ${senderName}`,
-      body: isRing ? "Testing incoming ring on your Android phone!" : "Push notifications are working properly!"
+      title: `Test Message from ${senderName}`,
+      body: "Push notifications are working properly!"
     });
 
     res.json({ ok: result.ok, result });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// -------------------------------------------------------------
-// 3. Manual Ring Endpoint
-// -------------------------------------------------------------
-
-// POST /api/ring - Ring partner's phone with rate limiting & socket alert
-router.post(API_PATHS.RING, async (req, res) => {
-  try {
-    const { roomId, roomPassword, senderRole } = req.body || {};
-    const targetRoomId = String(roomId || "0202").trim();
-    const role = String(senderRole || "").trim().toLowerCase();
-
-    if (role !== "he" && role !== "she") {
-      return res.status(400).json({ ok: false, error: "senderRole must be 'he' or 'she'." });
-    }
-
-    if (!verifyRoomCredentials(targetRoomId, roomPassword)) {
-      return res.status(401).json({ ok: false, error: "Access denied." });
-    }
-
-    const rateLimitCheck = checkRateLimit(`ring:${role}`, 1, 15000);
-    if (!rateLimitCheck.allowed) {
-      return res.status(429).json({ ok: false, error: `Please wait ${rateLimitCheck.retryAfterSeconds}s before ringing again.` });
-    }
-
-    const senderName = role === "he" ? "Harry" : "Elira";
-    const partnerRole = role === "he" ? "she" : "he";
-    const partnerName = role === "he" ? "Elira" : "Harry";
-
-    const io = getIO();
-    if (io) {
-      io.to(targetRoomId).emit("incoming-ring", {
-        fromRole: role,
-        fromName: senderName,
-        timestamp: Date.now()
-      });
-    }
-
-    const pushResult = await sendPushNotification({
-      targetRole: partnerRole,
-      roomId: targetRoomId,
-      type: "ring",
-      senderName,
-      senderRole: role,
-      title: `🔔 Incoming Ring from ${senderName}`,
-      body: `${senderName} is ringing your phone. Tap to answer.`
-    });
-
-    res.json({
-      ok: true,
-      message: `Ringing ${partnerName}'s phone...`,
-      pushDelivered: pushResult.ok
-    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

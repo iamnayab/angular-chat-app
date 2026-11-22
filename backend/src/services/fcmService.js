@@ -73,16 +73,15 @@ async function sendPushNotification({ targetRole, roomId = "0202", type = "messa
       return { ok: false, reason: "no_token_registered" };
     }
 
-    const isRing = (type === "ring");
-    const safeTitle = title || (isRing ? `🔔 Incoming Ring from ${senderName}` : `New message from ${senderName}`);
-    const safeBody = body || (isRing ? "Ringing your phone. Tap to answer." : "Tap to open QuickChat");
+    const safeTitle = title || `New message from ${senderName}`;
+    const safeBody = body || "Tap to open QuickChat";
     const websiteUrl = process.env.WEBSITE_URL || "https://elirakhan.onrender.com";
 
     // Strictly send metadata only. NEVER send private messages or passwords in payload.
     const message = {
       token,
       data: {
-        type: String(type),
+        type: String(type || "message"),
         sender: String(senderName),
         senderRole: String(senderRole),
         roomId: String(roomId),
@@ -97,10 +96,10 @@ async function sendPushNotification({ targetRole, roomId = "0202", type = "messa
       },
       android: {
         priority: "high",
-        ttl: isRing ? 60 * 1000 : 3600 * 1000,
+        ttl: 3600 * 1000,
         notification: {
-          channelId: isRing ? "chat_ring_channel" : "chat_messages_channel",
-          sound: isRing ? "ringtone" : "default",
+          channelId: "chat_messages_channel",
+          sound: "default",
           defaultVibrateTimings: true,
           clickAction: "OPEN_CHAT_WEBSITE"
         }

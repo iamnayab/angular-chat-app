@@ -1,4 +1,11 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import {
+  Component,
+  EventEmitter,
+  Output,
+  ViewChild,
+  ElementRef,
+  AfterViewInit
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CryptoService } from '../../services/crypto.service';
@@ -10,8 +17,11 @@ import { CryptoService } from '../../services/crypto.service';
   templateUrl: './unlock.component.html',
   styleUrls: ['./unlock.component.css']
 })
-export class UnlockComponent {
+export class UnlockComponent implements AfterViewInit {
   @Output() unlocked = new EventEmitter<{ roomId: string; encryptionKey: CryptoKey }>();
+
+  @ViewChild('roomIdInputRef') roomIdInputRef?: ElementRef<HTMLInputElement>;
+  @ViewChild('passwordInputRef') passwordInputRef?: ElementRef<HTMLInputElement>;
 
   roomIdInput = '';
   passwordInput = '';
@@ -19,6 +29,31 @@ export class UnlockComponent {
   isVerifying = false;
 
   constructor(private cryptoService: CryptoService) {}
+
+  ngAfterViewInit(): void {
+    setTimeout(() => {
+      this.roomIdInputRef?.nativeElement?.focus();
+    }, 100);
+  }
+
+  /**
+   * Automatically shifts cursor to Password field when 4 digits are typed
+   */
+  onRoomIdInput(): void {
+    if (this.roomIdInput && this.roomIdInput.trim().length === 4) {
+      this.passwordInputRef?.nativeElement?.focus();
+    }
+  }
+
+  /**
+   * If Enter is pressed on PIN field, prevent submit and shift cursor to Password
+   */
+  onRoomIdKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.passwordInputRef?.nativeElement?.focus();
+    }
+  }
 
   async onUnlockSubmit(): Promise<void> {
     this.joinError = '';

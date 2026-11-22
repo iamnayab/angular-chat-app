@@ -80,10 +80,6 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   private typingTimeout: any = null;
   private isCurrentlyTyping = false;
 
-  // Manual Ring
-  isRingingPartner = false;
-  ringButtonText = '🔔 Ring';
-
   // Attachment Staging & Preview Modal
   showPreviewModal = false;
   stagedFile: File | null = null;
@@ -221,6 +217,36 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     const decryptedList = await Promise.all(
       combined.map(async msg => {
         try {
+          if (msg.isAttachment && msg.attachment) {
+            const meta = msg.attachment.meta;
+            let blobUrl = this.ephemeralBlobs.get(msg.id)?.blobUrl;
+            if (!blobUrl && msg.attachment.data) {
+              const bytes = this.cryptoService.base64ToBytes(msg.attachment.data);
+              const decrypted = await this.cryptoService.decryptBuffer(
+                bytes.buffer,
+                meta.iv,
+                this.encryptionKey!
+              );
+              const blob = new Blob([decrypted], { type: meta.fileType });
+              blobUrl = URL.createObjectURL(blob);
+              this.ephemeralBlobs.set(msg.id, { blobUrl, blob, fileName: meta.fileName });
+            }
+            return {
+              id: msg.id,
+              senderRole: msg.senderRole,
+              sentAt: Number(msg.sentAt) || Date.now(),
+              seen: msg.seen,
+              isAttachment: true,
+              attachment: {
+                meta,
+                progress: 100,
+                statusText: 'Saved in Supabase',
+                isComplete: true,
+                blobUrl
+              }
+            } as DisplayMessage;
+          }
+
           const decrypted = await this.cryptoService.decryptMessage(msg, this.encryptionKey!);
           return {
             id: msg.id,
@@ -551,15 +577,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
       })
     );
 
-    // 6. Incoming Ring Alert
-    this.subs.add(
-      this.socketService.incomingRing$.subscribe(({ fromName }) => {
-        this.addSystemNote(`🔔 ${fromName || 'Partner'} is ringing your phone!`);
-        this.audioService.playRingChime();
-      })
-    );
-
-    // 7. Typing Indicator
+    // 6. Typing Indicator
     this.subs.add(
       this.socketService.typing$.subscribe(({ role, isTyping }) => {
         if (role !== this.myRole) {
@@ -694,33 +712,6 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
         }
       })
     );
-  }
-
-  // -------------------------------------------------------------
-  // Manual Ring Partner
-  // -------------------------------------------------------------
-  async ringPartner(): Promise<void> {
-    if (this.isRingingPartner) return;
-
-    const partnerName = this.myRole === 'he' ? 'Elira' : 'Harry';
-    this.isRingingPartner = true;
-    this.ringButtonText = '🔔 Ringing…';
-
-    try {
-      const res = await this.socketService.ringPartner();
-      if (res?.ok) {
-        this.addSystemNote(`🔔 Ringing ${partnerName}'s phone...`);
-      } else {
-        this.addSystemNote(res?.error || 'Could not ring partner.');
-      }
-    } catch {
-      this.addSystemNote('Could not ring partner.');
-    } finally {
-      setTimeout(() => {
-        this.isRingingPartner = false;
-        this.ringButtonText = '🔔 Ring';
-      }, 3000);
-    }
   }
 
   // -------------------------------------------------------------

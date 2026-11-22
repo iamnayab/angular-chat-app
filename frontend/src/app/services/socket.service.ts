@@ -16,7 +16,6 @@ export class SocketService {
   public messagesSeen$ = new Subject<{ seenBy: Role; at: number }>();
   public userStatus$ = new Subject<{ role: Role; isOnline: boolean; lastSeen?: number }>();
   public roomCount$ = new Subject<number>();
-  public incomingRing$ = new Subject<{ fromRole: Role; fromName: string; timestamp: number }>();
   public typing$ = new Subject<{ role: Role; isTyping: boolean }>();
   public chatCleared$ = new Subject<void>();
 
@@ -61,7 +60,6 @@ export class SocketService {
     this.socket.on('messages-seen', (data: { seenBy: Role; at: number }) => this.messagesSeen$.next(data));
     this.socket.on('user-status', (data: { role: Role; isOnline: boolean; lastSeen?: number }) => this.userStatus$.next(data));
     this.socket.on('room-count', (count: number) => this.roomCount$.next(count));
-    this.socket.on('incoming-ring', (data: { fromRole: Role; fromName: string; timestamp: number }) => this.incomingRing$.next(data));
     this.socket.on('typing', (data: { role: Role; isTyping: boolean }) => this.typing$.next(data));
     this.socket.on('chat-cleared', () => this.chatCleared$.next());
 
@@ -114,14 +112,6 @@ export class SocketService {
 
   markSeen(): void {
     this.socket.emit('mark-seen');
-  }
-
-  ringPartner(): Promise<{ ok: boolean; message?: string; pushDelivered?: boolean; error?: string }> {
-    return new Promise((resolve) => {
-      this.socket.emit('ring-partner', (res: { ok: boolean; message?: string; pushDelivered?: boolean; error?: string }) => {
-        resolve(res || { ok: false });
-      });
-    });
   }
 
   clearRoom(): Promise<{ ok: boolean; error?: string }> {

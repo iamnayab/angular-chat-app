@@ -38,17 +38,6 @@
         📹 Video
       </button>
 
-      <!-- Manual Ring -->
-      <button
-        class="leave ring-btn"
-        type="button"
-        title="Ring partner's phone"
-        [disabled]="isRingingPartner"
-        (click)="ringPartner()"
-      >
-        {{ ringButtonText }}
-      </button>
-
       <!-- Clear Chat -->
       <button
         class="leave danger-btn"
@@ -226,8 +215,8 @@
                       📥 Save to Device
                     </button>
 
-                    <div class="attachment-ephemeral-tag">
-                      ⏱️ Ephemeral (deletes when cache cleared)
+                    <div class="attachment-ephemeral-tag" style="color: #10b981;">
+                      🔒 Saved in Supabase Cloud Storage
                     </div>
                   }
                 </div>
@@ -298,7 +287,7 @@
     <button
       type="button"
       class="attach-btn"
-      title="Send picture or file (Ephemeral & Encrypted)"
+      title="Send picture or file (Encrypted & Saved in Supabase)"
       (click)="triggerFilePicker()"
     >
       📎

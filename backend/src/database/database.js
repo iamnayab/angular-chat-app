@@ -1,7 +1,8 @@
 /**
- * Database Module for PostgreSQL (Render Cloud / Remote) & Local JSON File Fallback
+ * Database Module for PostgreSQL (Supabase / Render Cloud / Remote) & Local JSON File Fallback
  * 
- * Strict Security: Only stores AES-256 encrypted IV + Ciphertext. Never stores plaintext or passwords!
+ * Strict Security: Only stores AES-256 encrypted IV + Ciphertext/Binary.
+ * Never stores plaintext or passwords!
  */
 
 const fs = require("fs");
@@ -15,6 +16,7 @@ let lastDbError = null;
 const LOCAL_DB_PATH = path.join(__dirname, "../chat_data.json");
 let localDb = {
   messages: [],
+  attachments: [],
   userStatus: {},
   fcmTokens: {}
 };
@@ -25,11 +27,12 @@ function loadLocalDb() {
       const content = fs.readFileSync(LOCAL_DB_PATH, "utf8");
       localDb = JSON.parse(content);
       if (!localDb.messages) localDb.messages = [];
+      if (!localDb.attachments) localDb.attachments = [];
       if (!localDb.userStatus) localDb.userStatus = {};
       if (!localDb.fcmTokens) localDb.fcmTokens = {};
     } catch (e) {
       console.warn("⚠️ Failed reading local db file, initializing fresh store:", e.message);
-      localDb = { messages: [], userStatus: {}, fcmTokens: {} };
+      localDb = { messages: [], attachments: [], userStatus: {}, fcmTokens: {} };
     }
   }
 }
@@ -51,7 +54,12 @@ async function createPgPoolWithAutoSsl(databaseUrl) {
   // Parse PostgreSQL BIGINT (OID 20) as safe JavaScript integer
   types.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10)));
 
-  const isExternalInitial = databaseUrl.includes(".render.com") || databaseUrl.includes("sslmode=require");
+  const isExternalInitial = 
+    databaseUrl.includes(".render.com") || 
+    databaseUrl.includes("supabase.co") || 
+    databaseUrl.includes("supabase.com") || 
+    databaseUrl.includes("pooler.supabase.com") || 
+    databaseUrl.includes("sslmode=require");
 
   try {
     console.log(`🔌 Initializing PostgreSQL connection (SSL: ${isExternalInitial ? "enabled" : "disabled"})...`);
@@ -106,19 +114,41 @@ async function initDatabase() {
           )
         `);
 
-        // 2. Index
+        // Index for messages
         try {
           await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_id, created_at)`);
         } catch (e) {}
 
-        // 3. Seen columns
+        // Seen & edited columns
         try {
           await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen BOOLEAN DEFAULT FALSE`);
           await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_at BIGINT`);
           await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at BIGINT`);
+          await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_attachment BOOLEAN DEFAULT FALSE`);
         } catch (e) {}
 
-        // 4. User status table
+        // 2. Attachments & Pictures Table (Saved permanently in Supabase)
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS attachments (
+            id VARCHAR(64) PRIMARY KEY,
+            room_id VARCHAR(64) NOT NULL,
+            sender_role VARCHAR(32) NOT NULL,
+            file_name TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            file_size BIGINT NOT NULL,
+            total_chunks INT NOT NULL,
+            is_image BOOLEAN DEFAULT FALSE,
+            iv TEXT NOT NULL,
+            data TEXT NOT NULL,
+            created_at BIGINT NOT NULL
+          )
+        `);
+
+        try {
+          await client.query(`CREATE INDEX IF NOT EXISTS idx_attachments_room ON attachments(room_id, created_at)`);
+        } catch (e) {}
+
+        // 3. User status table
         try {
           await client.query(`
             CREATE TABLE IF NOT EXISTS user_status (
@@ -130,7 +160,7 @@ async function initDatabase() {
           `);
         } catch (e) {}
 
-        // 5. FCM tokens table
+        // 4. FCM tokens table
         try {
           await client.query(`
             CREATE TABLE IF NOT EXISTS fcm_tokens (
@@ -143,7 +173,7 @@ async function initDatabase() {
           `);
         } catch (e) {}
 
-        console.log("✅ PostgreSQL Database connected & tables verified.");
+        console.log("✅ PostgreSQL (Supabase) Database connected & all tables verified.");
         usePostgres = true;
         lastDbError = null;
       } finally {
@@ -162,6 +192,9 @@ async function initDatabase() {
   console.log("📁 Using Local File Database (chat_data.json). Free & zero-setup.");
 }
 
+/**
+ * Save regular encrypted text message
+ */
 async function saveEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, sentAt = Date.now(), seen = false }) {
   const numericSentAt = Number(sentAt) || Date.now();
   const isSeen = Boolean(seen);
@@ -171,8 +204,8 @@ async function saveEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, se
   if (usePostgres && pgPool) {
     try {
       await pgPool.query(
-        `INSERT INTO messages (id, room_id, iv, ciphertext, sender_role, created_at, seen)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO messages (id, room_id, iv, ciphertext, sender_role, created_at, seen, is_attachment)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
          ON CONFLICT (id) DO UPDATE SET
            seen = EXCLUDED.seen,
            created_at = EXCLUDED.created_at`,
@@ -195,7 +228,8 @@ async function saveEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, se
     ciphertext,
     senderRole,
     sentAt: numericSentAt,
-    seen: isSeen
+    seen: isSeen,
+    isAttachment: false
   };
 
   if (existingIdx >= 0) {
@@ -208,16 +242,113 @@ async function saveEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, se
   return { success: true, db: "local" };
 }
 
+/**
+ * Save encrypted attachment / picture permanently in Supabase
+ */
+async function saveAttachment({ id, roomId, senderRole, fileName, fileType, fileSize, totalChunks, isImage, iv, data, createdAt = Date.now() }) {
+  const targetRoomId = String(roomId || "0202").trim();
+  const numericCreatedAt = Number(createdAt) || Date.now();
+
+  if (usePostgres && pgPool) {
+    try {
+      // 1. Insert into attachments table
+      await pgPool.query(
+        `INSERT INTO attachments (id, room_id, sender_role, file_name, file_type, file_size, total_chunks, is_image, iv, data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
+        [
+          id,
+          targetRoomId,
+          senderRole,
+          fileName,
+          fileType || "application/octet-stream",
+          fileSize || 0,
+          totalChunks || 1,
+          Boolean(isImage),
+          iv,
+          data,
+          numericCreatedAt
+        ]
+      );
+
+      // 2. Also register in messages timeline
+      await pgPool.query(
+        `INSERT INTO messages (id, room_id, iv, ciphertext, sender_role, created_at, seen, is_attachment)
+         VALUES ($1, $2, $3, '', $4, $5, FALSE, TRUE)
+         ON CONFLICT (id) DO NOTHING`,
+        [id, targetRoomId, iv, senderRole, numericCreatedAt]
+      );
+
+      return { success: true, db: "postgres" };
+    } catch (err) {
+      lastDbError = err.message;
+      console.error("❌ Postgres save attachment error:", err.message);
+    }
+  }
+
+  // Local JSON fallback
+  loadLocalDb();
+  if (!localDb.attachments) localDb.attachments = [];
+  const existingAttIdx = localDb.attachments.findIndex(a => a.id === id);
+  const attItem = {
+    id,
+    roomId: targetRoomId,
+    senderRole,
+    fileName,
+    fileType,
+    fileSize,
+    totalChunks,
+    isImage: Boolean(isImage),
+    iv,
+    data,
+    createdAt: numericCreatedAt
+  };
+
+  if (existingAttIdx >= 0) {
+    localDb.attachments[existingAttIdx] = attItem;
+  } else {
+    localDb.attachments.push(attItem);
+  }
+
+  // Add to local messages list
+  const existingMsgIdx = (localDb.messages || []).findIndex(m => m.id === id);
+  const msgItem = {
+    id,
+    roomId: targetRoomId,
+    iv,
+    ciphertext: "",
+    senderRole,
+    sentAt: numericCreatedAt,
+    seen: false,
+    isAttachment: true
+  };
+
+  if (existingMsgIdx >= 0) {
+    localDb.messages[existingMsgIdx] = msgItem;
+  } else {
+    localDb.messages.push(msgItem);
+  }
+
+  persistLocalDb();
+  return { success: true, db: "local" };
+}
+
+/**
+ * Retrieve messages and attachments joined together
+ */
 async function getRoomMessages(roomId, limit = 500) {
   const targetRoomId = String(roomId || "0202").trim();
 
   if (usePostgres && pgPool) {
     try {
       const res = await pgPool.query(
-        `SELECT id, room_id, iv, ciphertext, sender_role, created_at, seen, edited_at
-         FROM messages
-         WHERE room_id = $1
-         ORDER BY created_at ASC
+        `SELECT 
+           m.id, m.room_id, m.iv, m.ciphertext, m.sender_role, m.created_at, m.seen, m.edited_at, m.is_attachment,
+           a.file_name, a.file_type, a.file_size, a.total_chunks, a.is_image, a.iv AS att_iv, a.data AS att_data
+         FROM messages m
+         LEFT JOIN attachments a ON m.id = a.id
+         WHERE m.room_id = $1
+         ORDER BY m.created_at ASC
          LIMIT $2`,
         [targetRoomId, limit]
       );
@@ -229,7 +360,22 @@ async function getRoomMessages(roomId, limit = 500) {
         senderRole: r.sender_role,
         sentAt: Number(r.created_at),
         seen: Boolean(r.seen),
-        editedAt: r.edited_at ? Number(r.edited_at) : undefined
+        editedAt: r.edited_at ? Number(r.edited_at) : undefined,
+        isAttachment: Boolean(r.is_attachment),
+        attachment: r.is_attachment && r.file_name ? {
+          meta: {
+            id: r.id,
+            fileName: r.file_name,
+            fileType: r.file_type,
+            fileSize: Number(r.file_size),
+            totalChunks: Number(r.total_chunks || 1),
+            isImage: Boolean(r.is_image),
+            iv: r.att_iv || r.iv,
+            senderRole: r.sender_role,
+            sentAt: Number(r.created_at)
+          },
+          data: r.att_data
+        } : undefined
       }));
     } catch (err) {
       console.error("❌ Postgres get messages error:", err.message);
@@ -237,10 +383,39 @@ async function getRoomMessages(roomId, limit = 500) {
   }
 
   loadLocalDb();
+  const attMap = new Map((localDb.attachments || []).map(a => [a.id, a]));
   return (localDb.messages || [])
     .filter(m => String(m.roomId).trim() === targetRoomId)
     .sort((a, b) => (Number(a.sentAt) || 0) - (Number(b.sentAt) || 0))
-    .slice(-limit);
+    .slice(-limit)
+    .map(m => {
+      const att = attMap.get(m.id);
+      return {
+        id: m.id,
+        roomId: m.roomId,
+        iv: m.iv,
+        ciphertext: m.ciphertext,
+        senderRole: m.senderRole,
+        sentAt: Number(m.sentAt),
+        seen: Boolean(m.seen),
+        editedAt: m.editedAt ? Number(m.editedAt) : undefined,
+        isAttachment: Boolean(m.isAttachment),
+        attachment: att ? {
+          meta: {
+            id: att.id,
+            fileName: att.fileName,
+            fileType: att.fileType,
+            fileSize: att.fileSize,
+            totalChunks: att.totalChunks,
+            isImage: att.isImage,
+            iv: att.iv,
+            senderRole: att.senderRole,
+            sentAt: att.createdAt
+          },
+          data: att.data
+        } : undefined
+      };
+    });
 }
 
 async function editEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, editedAt = Date.now() }) {
@@ -255,7 +430,7 @@ async function editEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, ed
          WHERE id = $4 AND room_id = $5 AND sender_role = $6`,
         [iv, ciphertext, numericEditedAt, id, targetRoomId, senderRole]
       );
-      return { success: true, db: "postgres" };
+      return true;
     } catch (err) {
       console.error("❌ Postgres edit message error:", err.message);
     }
@@ -268,23 +443,23 @@ async function editEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, ed
     msg.ciphertext = ciphertext;
     msg.editedAt = numericEditedAt;
     persistLocalDb();
-    return { success: true, db: "local" };
+    return true;
   }
-  return { success: false, error: "Message not found" };
+  return false;
 }
 
-async function markMessagesAsSeen(roomId, viewerRole) {
+async function markMessagesAsSeen(roomId, readerRole) {
   const targetRoomId = String(roomId || "0202").trim();
+  const senderRole = readerRole === "he" ? "she" : "he";
   const now = Date.now();
-  const senderToMark = viewerRole === "he" ? "she" : "he";
 
   if (usePostgres && pgPool) {
     try {
       await pgPool.query(
         `UPDATE messages
          SET seen = TRUE, seen_at = $1
-         WHERE room_id = $2 AND sender_role = $3 AND (seen IS NULL OR seen = FALSE)`,
-        [now, targetRoomId, senderToMark]
+         WHERE room_id = $2 AND sender_role = $3 AND (seen IS FALSE OR seen IS NULL)`,
+        [now, targetRoomId, senderRole]
       );
       return { success: true, seenAt: now };
     } catch (err) {
@@ -293,22 +468,21 @@ async function markMessagesAsSeen(roomId, viewerRole) {
   }
 
   loadLocalDb();
-  let changed = false;
-  (localDb.messages || []).forEach(m => {
-    if (String(m.roomId).trim() === targetRoomId && m.senderRole === senderToMark && !m.seen) {
+  let updated = false;
+  for (const m of localDb.messages || []) {
+    if (String(m.roomId).trim() === targetRoomId && m.senderRole === senderRole && !m.seen) {
       m.seen = true;
       m.seenAt = now;
-      changed = true;
+      updated = true;
     }
-  });
-
-  if (changed) persistLocalDb();
+  }
+  if (updated) persistLocalDb();
   return { success: true, seenAt: now };
 }
 
 async function saveUserLastSeen(roomId, role, timestamp = Date.now()) {
   const targetRoomId = String(roomId || "0202").trim();
-  const cleanRole = String(role).trim().toLowerCase();
+  const cleanRole = String(role || "he").trim().toLowerCase();
   const ts = Number(timestamp) || Date.now();
 
   if (usePostgres && pgPool) {
@@ -316,7 +490,8 @@ async function saveUserLastSeen(roomId, role, timestamp = Date.now()) {
       await pgPool.query(
         `INSERT INTO user_status (room_id, role, last_seen)
          VALUES ($1, $2, $3)
-         ON CONFLICT (room_id, role) DO UPDATE SET last_seen = EXCLUDED.last_seen`,
+         ON CONFLICT (room_id, role)
+         DO UPDATE SET last_seen = EXCLUDED.last_seen`,
         [targetRoomId, cleanRole, ts]
       );
       return true;
@@ -365,6 +540,7 @@ async function clearRoomMessages(roomId) {
   if (usePostgres && pgPool) {
     try {
       await pgPool.query(`DELETE FROM messages WHERE room_id = $1`, [targetRoomId]);
+      await pgPool.query(`DELETE FROM attachments WHERE room_id = $1`, [targetRoomId]);
     } catch (err) {
       console.error("❌ Postgres clear messages error:", err.message);
     }
@@ -372,22 +548,24 @@ async function clearRoomMessages(roomId) {
 
   loadLocalDb();
   localDb.messages = (localDb.messages || []).filter(m => String(m.roomId).trim() !== targetRoomId);
+  localDb.attachments = (localDb.attachments || []).filter(a => String(a.roomId).trim() !== targetRoomId);
   persistLocalDb();
   return true;
 }
 
 async function saveFcmToken(roomId, role, token) {
   const targetRoomId = String(roomId || "0202").trim();
-  const targetRole = String(role).trim().toLowerCase();
-  const now = Date.now();
+  const cleanRole = String(role || "he").trim().toLowerCase();
+  const ts = Date.now();
 
   if (usePostgres && pgPool) {
     try {
       await pgPool.query(
         `INSERT INTO fcm_tokens (room_id, role, token, updated_at)
          VALUES ($1, $2, $3, $4)
-         ON CONFLICT (room_id, role) DO UPDATE SET token = EXCLUDED.token, updated_at = EXCLUDED.updated_at`,
-        [targetRoomId, targetRole, token, now]
+         ON CONFLICT (room_id, role)
+         DO UPDATE SET token = EXCLUDED.token, updated_at = EXCLUDED.updated_at`,
+        [targetRoomId, cleanRole, token, ts]
       );
       return true;
     } catch (err) {
@@ -397,84 +575,30 @@ async function saveFcmToken(roomId, role, token) {
 
   loadLocalDb();
   if (!localDb.fcmTokens) localDb.fcmTokens = {};
-  localDb.fcmTokens[`${targetRoomId}:${targetRole}`] = { token, updatedAt: now };
+  localDb.fcmTokens[`${targetRoomId}:${cleanRole}`] = { token, updatedAt: ts };
   persistLocalDb();
   return true;
 }
 
 async function getFcmToken(roomId, role) {
   const targetRoomId = String(roomId || "0202").trim();
-  const targetRole = String(role).trim().toLowerCase();
+  const cleanRole = String(role || "he").trim().toLowerCase();
 
   if (usePostgres && pgPool) {
     try {
       const res = await pgPool.query(
         `SELECT token FROM fcm_tokens WHERE room_id = $1 AND role = $2`,
-        [targetRoomId, targetRole]
+        [targetRoomId, cleanRole]
       );
-      if (res.rows.length > 0 && res.rows[0].token) {
-        return res.rows[0].token;
-      }
+      return (res.rows[0] && res.rows[0].token) || null;
     } catch (err) {
       console.error("❌ Postgres get FCM token error:", err.message);
     }
   }
 
   loadLocalDb();
-  const key = `${targetRoomId}:${targetRole}`;
-  if (localDb.fcmTokens && localDb.fcmTokens[key]) {
-    return localDb.fcmTokens[key].token || null;
-  }
-  return null;
-}
-
-async function getAllFcmTokens(roomId) {
-  const targetRoomId = String(roomId || "0202").trim();
-  const tokens = {};
-
-  if (usePostgres && pgPool) {
-    try {
-      const res = await pgPool.query(
-        `SELECT role, token FROM fcm_tokens WHERE room_id = $1`,
-        [targetRoomId]
-      );
-      for (const row of res.rows) {
-        tokens[row.role] = row.token;
-      }
-      return tokens;
-    } catch (err) {
-      console.error("❌ Postgres getAllFcmTokens error:", err.message);
-    }
-  }
-
-  loadLocalDb();
-  if (localDb.fcmTokens) {
-    for (const [key, data] of Object.entries(localDb.fcmTokens)) {
-      if (key.startsWith(`${targetRoomId}:`)) {
-        const role = key.split(":")[1];
-        tokens[role] = data.token;
-      }
-    }
-  }
-  return tokens;
-}
-
-async function removeFcmToken(roomId, role) {
-  const targetRoomId = String(roomId || "0202").trim();
-  const targetRole = String(role).trim().toLowerCase();
-
-  if (usePostgres && pgPool) {
-    try {
-      await pgPool.query(`DELETE FROM fcm_tokens WHERE room_id = $1 AND role = $2`, [targetRoomId, targetRole]);
-    } catch (e) {}
-  }
-
-  loadLocalDb();
-  if (localDb.fcmTokens) {
-    delete localDb.fcmTokens[`${targetRoomId}:${targetRole}`];
-    persistLocalDb();
-  }
-  return true;
+  const item = localDb.fcmTokens && localDb.fcmTokens[`${targetRoomId}:${cleanRole}`];
+  return (item && item.token) || null;
 }
 
 function getDatabaseStatus() {
@@ -488,15 +612,14 @@ function getDatabaseStatus() {
 module.exports = {
   initDatabase,
   saveEncryptedMessage,
-  editEncryptedMessage,
+  saveAttachment,
   getRoomMessages,
+  editEncryptedMessage,
   markMessagesAsSeen,
   saveUserLastSeen,
   getAllUserStatus,
   clearRoomMessages,
-  getDatabaseStatus,
   saveFcmToken,
   getFcmToken,
-  getAllFcmTokens,
-  removeFcmToken
+  getDatabaseStatus
 };
