@@ -1,0 +1,659 @@
+<main class="shell">
+  <header class="topbar">
+    <div class="brand-wrap">
+      <div class="brand-mark">🔒</div>
+    </div>
+    <div class="secure-pill"><span></span> End-to-End Encrypted</div>
+  </header>
+
+  <!-- 1. Room Unlock Form -->
+  @if (currentStage === 'unlock') {
+    <section id="joinPanel" class="join-card">
+      <div class="eyebrow">EXCLUSIVE ACCESS ONLY</div>
+      <h1>Room</h1>
+      <p class="intro">Enter the 4-digit Room ID and Password to unlock your conversation.</p>
+
+      <form (ngSubmit)="onUnlockSubmit()">
+        <div class="pin-grid">
+          <div class="pin-field">
+            <label for="roomId">ROOM ID (4-DIGIT)</label>
+            <input
+              id="roomId"
+              name="roomId"
+              type="password"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="4"
+              placeholder="••••"
+              required
+              autocomplete="off"
+              [(ngModel)]="roomIdInput"
+            />
+          </div>
+          <div class="pin-field">
+            <label for="roomPassword">PASSWORD (4-DIGIT)</label>
+            <input
+              id="roomPassword"
+              name="roomPassword"
+              type="password"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="4"
+              placeholder="••••"
+              required
+              autocomplete="off"
+              [(ngModel)]="passwordInput"
+            />
+          </div>
+        </div>
+
+        <button class="primary" type="submit" [disabled]="isVerifying">
+          @if (isVerifying) {
+            <span class="btn-loader">
+              <span class="role-spinner"></span>
+              <span>Verifying…</span>
+            </span>
+          } @else {
+            <span>Unlock Room →</span>
+          }
+        </button>
+
+        @if (joinError) {
+          <div class="error" role="alert">{{ joinError }}</div>
+        }
+      </form>
+    </section>
+  }
+
+  <!-- 2. Role Selection Modal (After Unlocking) -->
+  @if (currentStage === 'role') {
+    <div class="modal-overlay">
+      <div class="modal-card">
+        <div class="modal-badge">🔒 VERIFIED</div>
+        <h2>Who is joining?</h2>
+        <p class="modal-desc">
+          Please choose your identity so your chats appear on the right side and your partner's appear on the left.
+        </p>
+
+        <div class="role-grid">
+          <button
+            type="button"
+            class="role-card role-he"
+            [disabled]="isJoiningRole"
+            [style.opacity]="isJoiningRole && roleJoiningTarget !== 'he' ? '0.4' : '1'"
+            (click)="onChooseRole('he')"
+          >
+            @if (isJoiningRole && roleJoiningTarget === 'he') {
+              <span class="btn-loader">
+                <span class="role-spinner"></span>
+                <span>Opening Harry…</span>
+              </span>
+            } @else {
+              <span class="role-name">Harry</span>
+            }
+          </button>
+
+          <button
+            type="button"
+            class="role-card role-she"
+            [disabled]="isJoiningRole"
+            [style.opacity]="isJoiningRole && roleJoiningTarget !== 'she' ? '0.4' : '1'"
+            (click)="onChooseRole('she')"
+          >
+            @if (isJoiningRole && roleJoiningTarget === 'she') {
+              <span class="btn-loader">
+                <span class="role-spinner"></span>
+                <span>Opening Elira…</span>
+              </span>
+            } @else {
+              <span class="role-name">Elira</span>
+            }
+          </button>
+        </div>
+
+        @if (identityError) {
+          <div class="error" role="alert">{{ identityError }}</div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- 3. Active Chat Room Panel -->
+  @if (currentStage === 'chat') {
+    <section
+      class="chat-card"
+      [style.borderColor]="isDragOver ? '#38bdf8' : ''"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onDrop($event)"
+    >
+      <div class="chat-head">
+        <div class="chat-info">
+          <div
+            class="eyebrow"
+            [style.color]="myRole === 'he' ? '#93c5fd' : '#fda4af'"
+          >
+            YOU: {{ myRole === 'he' ? 'Harry' : 'Elira' }}
+          </div>
+          <h2>{{ myRole === 'he' ? 'Elira ❤️' : 'Harry 💙' }}</h2>
+          <div class="connection">{{ connectionText }}</div>
+        </div>
+
+        <div class="chat-actions">
+          <!-- Audio Call Button -->
+          <button
+            class="leave call-btn"
+            type="button"
+            title="Start Audio Call"
+            (click)="startCall('audio')"
+          >
+            📞 Call
+          </button>
+
+          <!-- Video Call Button -->
+          <button
+            class="leave call-btn video-call-btn"
+            type="button"
+            title="Start Video Call"
+            (click)="startCall('video')"
+          >
+            📹 Video
+          </button>
+
+          <!-- Manual Ring -->
+          <button
+            class="leave ring-btn"
+            type="button"
+            title="Ring partner's phone"
+            [disabled]="isRingingPartner"
+            (click)="ringPartner()"
+          >
+            {{ ringButtonText }}
+          </button>
+
+          <!-- Clear Chat -->
+          <button
+            class="leave danger-btn"
+            type="button"
+            title="Delete all chat history in this room"
+            (click)="clearChat()"
+          >
+            🗑️ Clear Chat
+          </button>
+
+          <button class="leave" type="button" (click)="leaveRoom()">Leave</button>
+        </div>
+      </div>
+
+      <div class="room-meta">
+        <span>{{ peopleCount }} / 2 connected</span>
+        <span
+          class="presence-tag"
+          [style.color]="isPartnerOnline ? '#10b981' : '#94a3b8'"
+        >
+          ● {{ myRole === 'he' ? 'Elira' : 'Harry' }} {{ isPartnerOnline ? 'Online ❤️' : 'Offline' }}
+        </span>
+      </div>
+
+      <!-- Messages Area -->
+      <div #messagesContainer class="messages" aria-live="polite">
+        @if (messages.length === 0) {
+          <div class="empty-state">
+            <div class="empty-icon">❤️</div>
+            <strong>Welcome to Private Space</strong>
+            <p>Messages are end-to-end encrypted and saved permanently in database.</p>
+          </div>
+        }
+
+        @for (msg of messages; track msg.id) {
+          @if (msg.isSystem) {
+            <div class="system-note">{{ msg.text }}</div>
+          } @else {
+            <div
+              [id]="'msg-' + msg.id"
+              class="bubble-row"
+              [class.mine-row]="msg.senderRole === myRole"
+              [class.theirs-row]="msg.senderRole !== myRole"
+            >
+              <!-- WhatsApp Swipe-to-reply reveal indicator -->
+              @if (activeSwipeMsgId === msg.id && swipeOffset > 15) {
+                <div class="swipe-reply-hint">
+                  ↩️
+                </div>
+              }
+
+              <div
+                class="bubble"
+                [class.mine]="msg.senderRole === myRole"
+                [class.theirs]="msg.senderRole !== myRole"
+                [class.role-he]="msg.senderRole === 'he'"
+                [class.role-she]="msg.senderRole === 'she'"
+                [style.transform]="activeSwipeMsgId === msg.id && swipeOffset > 0 ? 'translateX(' + swipeOffset + 'px)' : ''"
+                (touchstart)="onTouchStart($event, msg)"
+                (touchmove)="onTouchMove($event, msg)"
+                (touchend)="onTouchEnd($event, msg)"
+              >
+                <!-- Sender label and action tools -->
+                <div class="bubble-header-row">
+                  <span class="sender-label">
+                    {{ msg.senderRole === 'he' ? 'Harry' : 'Elira' }}
+                  </span>
+
+                  <!-- Hover/Action buttons (Reply & Edit) -->
+                  <div class="bubble-actions">
+                    <button
+                      type="button"
+                      class="bubble-action-btn"
+                      title="Reply (or swipe right)"
+                      (click)="setReplyTo(msg)"
+                    >
+                      ↩️
+                    </button>
+                    @if (msg.senderRole === myRole && !msg.isAttachment) {
+                      <button
+                        type="button"
+                        class="bubble-action-btn"
+                        title="Edit Message"
+                        (click)="startEdit(msg)"
+                      >
+                        ✏️
+                      </button>
+                    }
+                  </div>
+                </div>
+
+                <!-- WhatsApp Style Quoted Reply Preview -->
+                @if (msg.replyTo) {
+                  <div
+                    class="quoted-reply-box"
+                    [class.quote-he]="msg.replyTo.senderRole === 'he'"
+                    [class.quote-she]="msg.replyTo.senderRole === 'she'"
+                    (click)="scrollToMessage(msg.replyTo.id)"
+                  >
+                    <div class="quoted-sender">
+                      {{ msg.replyTo.senderRole === 'he' ? 'Harry' : 'Elira' }}
+                    </div>
+                    <div class="quoted-snippet">{{ msg.replyTo.text }}</div>
+                  </div>
+                }
+
+                <!-- Regular text message -->
+                @if (!msg.isAttachment) {
+                  <div class="content">{{ msg.text }}</div>
+                }
+
+                <!-- Ephemeral Attachment Message -->
+                @if (msg.isAttachment && msg.attachment) {
+                  <div class="content">
+                    <div class="attachment-card">
+                      <!-- Progress bar when transferring -->
+                      @if (!msg.attachment.isComplete && !msg.attachment.error) {
+                        <div class="attachment-progress-wrap">
+                          <div class="attachment-progress-text">
+                            <span>{{ msg.attachment.statusText }}</span>
+                            <span>{{ msg.attachment.progress }}%</span>
+                          </div>
+                          <div class="attachment-progress-bar">
+                            <div
+                              class="attachment-progress-fill"
+                              [style.width.%]="msg.attachment.progress"
+                            ></div>
+                          </div>
+                        </div>
+                      }
+
+                      <!-- Error state -->
+                      @if (msg.attachment.error) {
+                        <div class="error" style="text-align: left; margin: 4px 0;">
+                          ⚠️ {{ msg.attachment.error }}
+                        </div>
+                      }
+
+                      <!-- Completed Image Attachment -->
+                      @if (msg.attachment.isComplete && msg.attachment.meta.isImage && msg.attachment.blobUrl) {
+                        <div
+                          class="attachment-img-container"
+                          title="Click to enlarge"
+                          (click)="openLightbox(msg.attachment.blobUrl, msg.attachment.meta.fileName)"
+                        >
+                          <img
+                            class="attachment-img-thumb"
+                            [src]="msg.attachment.blobUrl"
+                            [alt]="msg.attachment.meta.fileName"
+                          />
+                          <div class="attachment-img-hover-overlay">🔍 Click to enlarge</div>
+                        </div>
+                      }
+
+                      <!-- Completed File Attachment -->
+                      @if (msg.attachment.isComplete && !msg.attachment.meta.isImage) {
+                        <div class="attachment-file-bubble">
+                          <div class="attachment-file-bubble-icon">
+                            {{ getFileEmoji(msg.attachment.meta.fileType, msg.attachment.meta.fileName) }}
+                          </div>
+                          <div class="attachment-file-bubble-info">
+                            <div class="attachment-file-bubble-name">{{ msg.attachment.meta.fileName }}</div>
+                            <div class="attachment-file-bubble-size">{{ formatBytes(msg.attachment.meta.fileSize) }}</div>
+                          </div>
+                        </div>
+                      }
+
+                      <!-- Save / Download button -->
+                      @if (msg.attachment.isComplete && msg.attachment.blobUrl) {
+                        <button
+                          type="button"
+                          class="btn-save-attachment"
+                          (click)="downloadBlob(msg.attachment.blobUrl, msg.attachment.meta.fileName)"
+                        >
+                          📥 Save to Device
+                        </button>
+
+                        <div class="attachment-ephemeral-tag">
+                          ⏱️ Ephemeral (deletes when cache cleared)
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+
+                <!-- Time & Seen Status & Edited Indicator -->
+                <time [title]="formatFullDateTime(msg.sentAt)">
+                  @if (msg.isEdited) {
+                    <span class="edited-tag">(edited)</span>
+                  }
+                  <span>{{ formatMessageDateTime(msg.sentAt) }}</span>
+                  @if (msg.senderRole === myRole) {
+                    <span
+                      class="seen-status"
+                      [class.is-seen]="msg.seen"
+                    >
+                      {{ msg.seen ? '✓✓ Seen' : (isPartnerOnline ? '✓✓' : '✓') }}
+                    </span>
+                  }
+                </time>
+              </div>
+            </div>
+          }
+        }
+      </div>
+
+      <!-- Typing Indicator -->
+      @if (isTypingIndicatorVisible) {
+        <div class="typing-indicator" aria-live="polite">
+          <div class="typing-content">
+            <span>{{ typingPartnerName }} is typing</span>
+            <div class="typing-dots">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Replying Banner (WhatsApp Style) -->
+      @if (replyingTo) {
+        <div class="reply-preview-bar">
+          <div class="reply-bar-accent" [class.accent-he]="replyingTo.senderRole === 'he'" [class.accent-she]="replyingTo.senderRole === 'she'"></div>
+          <div class="reply-bar-content">
+            <div class="reply-bar-title">
+              Replying to <strong>{{ replyingTo.senderRole === 'he' ? 'Harry' : 'Elira' }}</strong>
+            </div>
+            <div class="reply-bar-snippet">{{ replyingTo.text }}</div>
+          </div>
+          <button type="button" class="reply-bar-cancel" title="Cancel Reply" (click)="cancelReply()">✕</button>
+        </div>
+      }
+
+      <!-- Editing Message Banner -->
+      @if (editingMessage) {
+        <div class="edit-preview-bar">
+          <div class="edit-bar-icon">✏️</div>
+          <div class="edit-bar-content">
+            <div class="edit-bar-title">Editing message</div>
+            <div class="edit-bar-snippet">{{ editingMessage.text }}</div>
+          </div>
+          <button type="button" class="reply-bar-cancel" title="Cancel Edit" (click)="cancelEdit()">✕</button>
+        </div>
+      }
+
+      <!-- Composer Form -->
+      <form class="composer" (ngSubmit)="handleComposerSubmit()">
+        <button
+          type="button"
+          class="attach-btn"
+          title="Send picture or file (Ephemeral & Encrypted)"
+          (click)="triggerFilePicker()"
+        >
+          📎
+        </button>
+
+        <input
+          #fileInput
+          type="file"
+          style="display: none;"
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z,.mp3,.mp4,.wav,.mov,.webm"
+          (change)="onFileSelected($event)"
+        />
+
+        <input
+          #messageInputField
+          [placeholder]="editingMessage ? 'Edit your message…' : (replyingTo ? 'Type your reply…' : 'Write a message…')"
+          maxlength="4000"
+          autocomplete="off"
+          required
+          [(ngModel)]="draftMessage"
+          name="chatDraft"
+          (input)="onMessageInput()"
+        />
+
+        <button type="submit" [title]="editingMessage ? 'Save Edit' : 'Send Message'">
+          {{ editingMessage ? '✓' : '↑' }}
+        </button>
+      </form>
+      <div class="composer-note">
+        {{ editingMessage ? 'Enter to save changes • Esc to cancel' : 'Enter to send • Swipe right to reply • AES-256 encrypted' }}
+      </div>
+    </section>
+  }
+
+  <!-- Attachment Preview Modal before sending -->
+  @if (showPreviewModal) {
+    <div class="attachment-modal-overlay" (click)="closePreviewModal()">
+      <div class="attachment-modal-card" (click)="$event.stopPropagation()">
+        <div class="attachment-modal-header">
+          <div class="attachment-modal-title">
+            <span>{{ stagedFileIsImage ? '🖼️' : stagedFileIcon }}</span> Send Attachment
+          </div>
+          <button type="button" class="attachment-modal-close" (click)="closePreviewModal()">✕</button>
+        </div>
+
+        @if (stagedFileIsImage && stagedFilePreviewUrl) {
+          <div class="attachment-preview-box">
+            <img class="attachment-preview-img" [src]="stagedFilePreviewUrl" alt="Preview" />
+          </div>
+        } @else {
+          <div class="attachment-file-preview">
+            <div class="attachment-file-icon">{{ stagedFileIcon }}</div>
+            <div class="attachment-file-details">
+              <div class="attachment-file-name">{{ stagedFileName }}</div>
+              <div class="attachment-file-meta">{{ stagedFileMetaText }}</div>
+            </div>
+          </div>
+        }
+
+        <div class="attachment-privacy-badge">
+          🔒 <span>End-to-End Encrypted. Stored only in RAM/cache, never in database.</span>
+        </div>
+
+        @if (attachmentModalError) {
+          <div class="error">{{ attachmentModalError }}</div>
+        }
+
+        <div class="attachment-modal-actions">
+          <button
+            type="button"
+            class="attachment-btn-cancel"
+            [disabled]="isSendingAttachment"
+            (click)="closePreviewModal()"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="attachment-btn-send"
+            [disabled]="isSendingAttachment"
+            (click)="sendStagedAttachment()"
+          >
+            @if (isSendingAttachment) {
+              <span class="btn-loader">
+                <span class="role-spinner"></span>
+                <span>Encrypting…</span>
+              </span>
+            } @else {
+              <span>Send</span>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Fullscreen Lightbox Image Viewer -->
+  @if (showLightbox) {
+    <div class="attachment-lightbox-overlay" (click)="closeLightbox()">
+      <div class="attachment-lightbox-topbar" (click)="$event.stopPropagation()">
+        <div class="attachment-lightbox-title">{{ lightboxTitle }}</div>
+        <div class="attachment-lightbox-actions">
+          <button
+            type="button"
+            class="attachment-lightbox-save-btn"
+            (click)="downloadBlob(lightboxUrl, lightboxTitle)"
+          >
+            📥 Save to Device
+          </button>
+          <button type="button" class="attachment-lightbox-close-btn" (click)="closeLightbox()">
+            ✕
+          </button>
+        </div>
+      </div>
+      <div class="attachment-lightbox-body">
+        <img class="attachment-lightbox-img" [src]="lightboxUrl" [alt]="lightboxTitle" />
+      </div>
+    </div>
+  }
+
+  <!-- Incoming Call Modal -->
+  @if (activeCall?.status === 'incoming') {
+    <div class="call-modal-overlay">
+      <div class="call-incoming-card">
+        <div class="call-pulse-avatar">
+          <div class="call-avatar-circle">
+            {{ activeCall?.partnerRole === 'he' ? '💙' : '❤️' }}
+          </div>
+        </div>
+
+        <h3 class="call-incoming-name">{{ activeCall?.partnerName }}</h3>
+        <p class="call-incoming-type">
+          {{ activeCall?.isVideo ? '📹 Incoming Video Call…' : '📞 Incoming Audio Call…' }}
+        </p>
+
+        <div class="call-incoming-actions">
+          <button type="button" class="call-btn-reject" title="Decline Call" (click)="rejectIncomingCall()">
+            📵 Decline
+          </button>
+          <button type="button" class="call-btn-accept" title="Accept Call" (click)="acceptIncomingCall()">
+            📞 Accept
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Active Call Overlay (Audio / Video) -->
+  @if (activeCall && (activeCall.status === 'calling' || activeCall.status === 'connected')) {
+    <div class="active-call-overlay">
+      <!-- Call Header Info -->
+      <div class="call-header-dock">
+        <div class="call-party-info">
+          <span class="call-party-name">{{ activeCall.partnerName }}</span>
+          <span class="call-status-badge">
+            {{ activeCall.status === 'calling' ? 'Calling…' : webrtcService.formatDuration(activeCall.durationSeconds) }}
+          </span>
+        </div>
+        <div class="call-type-indicator">
+          {{ activeCall.isVideo ? '📹 HD Video' : '📞 Crystal Audio' }}
+        </div>
+      </div>
+
+      <!-- Remote Stream Area -->
+      <div class="call-video-stage">
+        @if (activeCall.isVideo) {
+          <video #remoteVideoRef class="remote-video-feed" autoplay playsinline></video>
+        } @else {
+          <!-- Audio Call Wave Animation -->
+          <div class="audio-call-stage">
+            <div class="audio-caller-avatar">
+              {{ activeCall.partnerRole === 'he' ? '💙' : '❤️' }}
+            </div>
+            <div class="audio-wave-wrap">
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+              <span class="wave-bar"></span>
+            </div>
+            <p class="audio-call-hint">
+              {{ activeCall.status === 'connected' ? 'Secure Peer-to-Peer Voice Call' : 'Connecting to Partner…' }}
+            </p>
+          </div>
+        }
+
+        <!-- Local Picture-in-Picture Video -->
+        @if (activeCall.isVideo) {
+          <div class="local-pip-container" [class.pip-hidden]="!activeCall.isVideoEnabled">
+            <video #localVideoRef class="local-video-feed" autoplay playsinline muted></video>
+            <div class="pip-label">You</div>
+          </div>
+        }
+      </div>
+
+      <!-- Call Floating Controls Dock -->
+      <div class="call-controls-dock">
+        <!-- Mic Mute Button -->
+        <button
+          type="button"
+          class="call-control-btn"
+          [class.active-danger]="activeCall.isMuted"
+          [title]="activeCall.isMuted ? 'Unmute Microphone' : 'Mute Microphone'"
+          (click)="toggleCallAudio()"
+        >
+          {{ activeCall.isMuted ? '🔇' : '🎙️' }}
+        </button>
+
+        <!-- Video On/Off Button (if video call) -->
+        @if (activeCall.isVideo) {
+          <button
+            type="button"
+            class="call-control-btn"
+            [class.active-danger]="!activeCall.isVideoEnabled"
+            [title]="activeCall.isVideoEnabled ? 'Turn Off Camera' : 'Turn On Camera'"
+            (click)="toggleCallVideo()"
+          >
+            {{ activeCall.isVideoEnabled ? '📹' : '📷🚫' }}
+          </button>
+        }
+
+        <!-- Hang Up Button -->
+        <button
+          type="button"
+          class="call-control-btn btn-hangup"
+          title="End Call"
+          (click)="endActiveCall()"
+        >
+          📵
+        </button>
+      </div>
+    </div>
+  }
+
+  <footer>Encrypted Chat <span>•</span> Cloud Persistent Storage</footer>
+</main>
