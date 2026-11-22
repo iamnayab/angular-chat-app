@@ -24,6 +24,7 @@ const possibleStaticPaths = [
   path.join(__dirname, "../dist")
 ];
 
+let staticServed = false;
 for (const p of possibleStaticPaths) {
   if (fs.existsSync(p)) {
     console.log(`📂 Serving static frontend assets from: ${p}`);
@@ -34,8 +35,13 @@ for (const p of possibleStaticPaths) {
         res.setHeader("X-Frame-Options", "DENY");
       }
     }));
+    staticServed = true;
     break;
   }
+}
+
+if (!staticServed) {
+  console.warn("⚠️ [Static Assets] No compiled Angular frontend found in static paths. UI will not be served until the frontend is built!");
 }
 
 // Attach Socket.IO separately
@@ -200,7 +206,23 @@ app.get("*", (req, res, next) => {
       return res.sendFile(indexPath);
     }
   }
-  next();
+  res.status(503).send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="UTF-8"><title>Frontend Build Missing</title></head>
+    <body style="font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+      <div style="background: #1e293b; border: 1px solid #334155; padding: 2.5rem; border-radius: 12px; max-width: 500px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <h2 style="color: #f43f5e; margin-top: 0;">⚠️ Frontend Not Built Yet</h2>
+        <p style="color: #94a3b8; font-size: 0.95rem; line-height: 1.5;">The Node.js backend is running, but the Angular frontend assets were not found on this server.</p>
+        <div style="background: #0f172a; padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.85rem; color: #38bdf8; margin: 1.5rem 0; text-align: left;">
+          Render Build Command: npm run build<br>
+          Render Start Command: npm start
+        </div>
+        <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 0;">Please trigger a manual deploy with cache cleared on Render after updating the Build Command.</p>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 const PORT = process.env.PORT || 3000;

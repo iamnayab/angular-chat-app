@@ -5,6 +5,7 @@
   "description": "Fullstack Two-Person Encrypted Chat migrated to Angular 19 + Node.js with Separate Socket.IO Controller",
   "scripts": {
     "start": "node backend/src/server.js",
+    "build": "npm --prefix backend install --no-save && npm --prefix frontend install --no-save --include=dev && npm --prefix frontend run build",
     "test": "node test-migration.js",
     "server": "node backend/src/server.js",
     "client": "npm --prefix frontend start",
