@@ -7,6 +7,12 @@
 
 const fs = require("fs");
 const path = require("path");
+const dns = require("dns");
+
+// Force IPv4 first to prevent ENETUNREACH on platforms like Render that lack IPv6
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 let pgPool = null;
 let usePostgres = false;

@@ -1,8 +1,9 @@
 {
   "messages": [],
   "userStatus": {
-    "0202:he": 1795351727529,
+    "0202:he": 1795377961790,
     "0202:she": 1795351728888
   },
-  "fcmTokens": {}
+  "fcmTokens": {},
+  "attachments": []
 }
