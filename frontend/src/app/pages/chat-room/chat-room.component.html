@@ -14,7 +14,7 @@
         YOU: {{ myRole === 'he' ? 'Harry' : 'Elira' }}
       </div>
       <!-- <h2>{{ myRole === 'he' ? 'Elira ❤️' : 'Harry 💙' }}</h2> -->
-      <div class="connection">{{ connectionText }}</div>
+      <!-- <div class="connection">{{ connectionText }}</div> -->
     </div>
 
     <div class="chat-actions">
@@ -58,7 +58,10 @@
       class="presence-tag"
       [style.color]="isPartnerOnline ? '#10b981' : '#94a3b8'"
     >
-      ● {{ myRole === 'he' ? 'Elira' : 'Harry' }} {{ isPartnerOnline ? 'Online ❤️' : 'Offline' }}
+      ● {{ myRole === 'he' ? 'Elira' : 'Harry' }} {{ isPartnerOnline ? 'Online' : '' }}
+      <div class="connection" *ngIf="!isPartnerOnline">
+  {{ connectionText }}
+</div>
     </span>
   </div>
 
