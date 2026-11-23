@@ -21,7 +21,7 @@
         <button
           type="button"
           class="attachment-lightbox-zoom-btn zoom-level-badge"
-          title="Reset Zoom"
+          title="Reset Zoom & Position"
           (click)="resetZoom()"
         >
           {{ Math.round(zoomLevel * 100) }}%
@@ -54,17 +54,28 @@
       </div>
     </div>
 
-    <!-- Lightbox Image Viewport with Pan/Zoom -->
+    <!-- Lightbox Image Viewport with Pan/Zoom & Swipe -->
     <div class="attachment-lightbox-body" (click)="onClose()">
-      <img
-        class="attachment-lightbox-img"
-        [src]="imageUrl"
-        [alt]="title || 'Photo'"
-        [style.transform]="'scale(' + zoomLevel + ')'"
-        [style.cursor]="zoomLevel > 1 ? 'zoom-out' : 'zoom-in'"
-        (click)="toggleZoom($event)"
-        (wheel)="onWheel($event)"
-      />
+      <div
+        class="attachment-lightbox-stage"
+        (click)="$event.stopPropagation()"
+      >
+        <img
+          class="attachment-lightbox-img"
+          [class.is-dragging]="isDragging"
+          [src]="imageUrl"
+          [alt]="title || 'Photo'"
+          [style.transform]="'translate3d(' + panX + 'px, ' + panY + 'px, 0px) scale(' + zoomLevel + ')'"
+          [style.cursor]="zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'"
+          (mousedown)="onMouseDown($event)"
+          (touchstart)="onTouchStart($event)"
+          (touchmove)="onTouchMove($event)"
+          (touchend)="onTouchEnd($event)"
+          (click)="onImageClick($event)"
+          (wheel)="onWheel($event)"
+          draggable="false"
+        />
+      </div>
     </div>
   </div>
 }

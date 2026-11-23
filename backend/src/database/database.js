@@ -450,6 +450,15 @@ async function editEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, ed
     msg.iv = iv;
     msg.ciphertext = ciphertext;
     msg.editedAt = numericEditedAt;
+    if (msg.attachment && msg.attachment.meta) {
+      msg.attachment.meta.caption = ciphertext;
+    }
+  }
+  const att = (localDb.attachments || []).find(a => a.id === id && String(a.roomId).trim() === targetRoomId);
+  if (att) {
+    att.caption = ciphertext;
+  }
+  if (msg || att) {
     persistLocalDb();
     return true;
   }

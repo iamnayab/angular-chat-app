@@ -372,11 +372,55 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   async saveEditedMessage(): Promise<void> {
     const newText = this.draftMessage.trim();
     const msg = this.editingMessage;
-    if (!newText || !msg || !this.encryptionKey || !this.myRole) return;
+    if (!msg || !this.myRole) return;
+
+    if (!msg.isAttachment && !newText) return;
 
     const editedAt = Date.now();
 
     try {
+      if (msg.isAttachment) {
+        // Caption update for photo attachment
+        msg.text = newText || undefined;
+        if (msg.attachment?.meta) {
+          msg.attachment.meta.caption = newText || undefined;
+        }
+        msg.isEdited = true;
+        msg.editedAt = editedAt;
+
+        // Update local storage
+        const localList = this.storageService.getLocalMessages();
+        const localMsg = localList.find(m => m.id === msg.id);
+        if (localMsg) {
+          localMsg.ciphertext = newText;
+          localMsg.editedAt = editedAt;
+          if (localMsg.attachment?.meta) {
+            localMsg.attachment.meta.caption = newText;
+          }
+          this.storageService.saveLocalMessage(localMsg);
+        }
+
+        // Reset edit state
+        this.editingMessage = null;
+        this.draftMessage = '';
+
+        // Emit edit to server
+        const payload: EncryptedPayload = {
+          id: msg.id,
+          roomId: this.roomId || '0202',
+          iv: '',
+          ciphertext: newText,
+          senderRole: this.myRole,
+          sentAt: msg.sentAt,
+          editedAt,
+          isAttachment: true
+        };
+        await this.socketService.editChatMessage(payload);
+        return;
+      }
+
+      // Regular text message
+      if (!this.encryptionKey) return;
       const payloadData: MessagePayloadData = {
         text: newText,
         replyTo: msg.replyTo
@@ -413,7 +457,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 
   startEdit(msg: DisplayMessage): void {
-    if (msg.senderRole !== this.myRole || msg.isAttachment || msg.isSystem) return;
+    if (msg.senderRole !== this.myRole || msg.isSystem) return;
     this.cancelReply();
     this.editingMessage = msg;
     this.draftMessage = msg.text || '';
@@ -634,18 +678,49 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     // 3. Message Edited by Partner
     this.subs.add(
       this.socketService.messageEdited$.subscribe(async payload => {
-        if (!this.encryptionKey) return;
         const existing = this.messages.find(m => m.id === payload.id);
         if (existing) {
           try {
-            const decrypted = await this.cryptoService.decryptMessage(payload, this.encryptionKey);
-            existing.text = decrypted.text;
-            if (decrypted.replyTo) existing.replyTo = decrypted.replyTo;
-            existing.isEdited = true;
-            existing.editedAt = Number(payload.editedAt) || Date.now();
-            this.storageService.saveLocalMessage(payload);
+            if (existing.isAttachment) {
+              // Partner edited photo caption
+              let newCaption = payload.ciphertext || '';
+              if (payload.iv && this.encryptionKey) {
+                try {
+                  const decrypted = await this.cryptoService.decryptMessage(payload, this.encryptionKey);
+                  newCaption = decrypted.text;
+                } catch {
+                  newCaption = payload.ciphertext || '';
+                }
+              }
+              const trimmed = newCaption.trim();
+              existing.text = trimmed ? trimmed : undefined;
+              if (existing.attachment?.meta) {
+                existing.attachment.meta.caption = existing.text;
+              }
+              existing.isEdited = true;
+              existing.editedAt = Number(payload.editedAt) || Date.now();
+
+              // Update in local cache
+              const localMsg = this.storageService.getLocalMessages().find(m => m.id === payload.id);
+              if (localMsg) {
+                localMsg.ciphertext = trimmed;
+                localMsg.editedAt = existing.editedAt;
+                if (localMsg.attachment?.meta) {
+                  localMsg.attachment.meta.caption = trimmed;
+                }
+                this.storageService.saveLocalMessage(localMsg);
+              }
+            } else {
+              if (!this.encryptionKey) return;
+              const decrypted = await this.cryptoService.decryptMessage(payload, this.encryptionKey);
+              existing.text = decrypted.text;
+              if (decrypted.replyTo) existing.replyTo = decrypted.replyTo;
+              existing.isEdited = true;
+              existing.editedAt = Number(payload.editedAt) || Date.now();
+              this.storageService.saveLocalMessage(payload);
+            }
           } catch (err) {
-            console.warn('Failed to decrypt edited message:', err);
+            console.warn('Failed to handle edited message:', err);
           }
         }
       })

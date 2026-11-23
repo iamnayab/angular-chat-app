@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="qcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Dark Rounded Container -->
+  <rect width="64" height="64" rx="16" fill="#0b1220"/>
+  
+  <!-- Outer glowing chat bubble -->
+  <path d="M12 24C12 16.27 18.27 10 26 10H38C45.73 10 52 16.27 52 24V34C52 41.73 45.73 48 38 48H23L13 56V47.5C12.35 46.43 12 45.18 12 43.85V24Z" fill="url(#qcGrad)" filter="url(#shadow)"/>
+
+  <!-- Fast lightning bolt inside bubble -->
+  <polygon points="34,17 23,31 31,31 28,43 41,27 32,27" fill="url(#boltGrad)"/>
+</svg>

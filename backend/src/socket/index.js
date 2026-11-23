@@ -309,6 +309,18 @@ function setupSocketIO(httpServer) {
         editedAt
       });
 
+      const partnerRole = role === "he" ? "she" : "he";
+      const partnerSocketId = roomMembers.get(partnerRole);
+      if (partnerSocketId && partnerSocketId !== socket.id) {
+        io.to(partnerSocketId).emit("message-edited", {
+          id: payload.id,
+          iv: payload.iv,
+          ciphertext: payload.ciphertext,
+          senderRole: role,
+          editedAt
+        });
+      }
+
       console.log(`✏️ [Socket] Message ${payload.id} edited by ${role} in room ${roomId}.`);
 
       if (typeof reply === "function") {
