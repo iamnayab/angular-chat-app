@@ -59,9 +59,9 @@
       [style.color]="isPartnerOnline ? '#10b981' : '#94a3b8'"
     >
       ● {{ myRole === 'he' ? 'Elira' : 'Harry' }} {{ isPartnerOnline ? 'Online' : '' }}
-      <div class="connection" *ngIf="!isPartnerOnline">
+      <span class="connection" *ngIf="!isPartnerOnline">
   {{ connectionText }}
-</div>
+      </span>
     </span>
   </div>
 

@@ -967,15 +967,14 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 
   private updatePresenceText(): void {
-    const partnerName = this.myRole === 'he' ? 'Elira' : 'Harry';
-    if (this.isPartnerOnline) {
-      this.connectionText = `${partnerName} is online`;
-    } else if (this.partnerLastSeen) {
-      this.connectionText = `${partnerName} last seen ${this.formatLastSeen(this.partnerLastSeen)}`;
-    } else {
-      this.connectionText = `${partnerName} is offline`;
-    }
+  if (this.isPartnerOnline) {
+    this.connectionText = 'Online';
+  } else if (this.partnerLastSeen) {
+    this.connectionText = `Last seen ${this.formatLastSeen(this.partnerLastSeen)}`;
+  } else {
+    this.connectionText = 'Offline';
   }
+}
 
   private scrollToBottom(): void {
     setTimeout(() => {
