@@ -37,6 +37,7 @@ export class AppComponent {
     this.activeRoomId = event.roomId;
     this.encryptionKey = event.encryptionKey;
     this.currentStage = 'role';
+    this.updateBodyClass();
   }
 
   /**
@@ -46,12 +47,21 @@ export class AppComponent {
     this.myRole = event.role;
     this.joinRoomData = event.response;
     this.currentStage = 'chat';
+    this.updateBodyClass();
   }
 
   /**
    * Leave Chat room and return to unlock screen
    */
   onLeaveChat(): void {
+    this.currentStage = 'unlock';
+    this.updateBodyClass();
     window.location.reload();
+  }
+
+  private updateBodyClass(): void {
+    if (typeof document !== 'undefined') {
+      document.body.classList.toggle('in-chat-stage', this.currentStage === 'chat');
+    }
   }
 }

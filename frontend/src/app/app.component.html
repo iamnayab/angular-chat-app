@@ -1,8 +1,5 @@
-<main class="shell">
+<main class="shell" [class.stage-chat]="currentStage === 'chat'">
   <header class="topbar">
-    <!-- <div class="brand-wrap">
-      <div class="brand-mark">🔒</div>
-    </div> -->
     <div class="secure-pill"><span></span> End-to-End Encrypted</div>
   </header>
 
@@ -33,5 +30,7 @@
   <!-- WebRTC Audio/Video Call Overlay -->
   <app-call-modal></app-call-modal>
 
-  <footer>Encrypted Chat <span>•</span> Cloud Persistent Storage</footer>
+  @if (currentStage !== 'chat') {
+    <footer>Encrypted Chat <span>•</span> Cloud Persistent Storage</footer>
+  }
 </main>
