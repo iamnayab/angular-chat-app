@@ -21,3 +21,10 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Android build outputs & temporary files
+quickchat-android/build/
+quickchat-android/.gradle/
+*.idsig
+*.keystore
+

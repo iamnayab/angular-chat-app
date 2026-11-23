@@ -574,6 +574,27 @@ body {
 }
 
 /* Chat Bubble Layout: Mine on RIGHT, Theirs on LEFT */
+@keyframes waterFloatUp {
+  0% {
+    opacity: 0;
+    transform: translateY(32px) scale(0.92);
+    filter: blur(2px);
+  }
+  50% {
+    opacity: 0.96;
+    transform: translateY(-4px) scale(1.02);
+    filter: blur(0px);
+  }
+  75% {
+    transform: translateY(1.5px) scale(0.998);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
 .bubble {
   max-width: 78%;
   padding: 10px 14px;
@@ -584,12 +605,39 @@ body {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  animation: popIn 0.15s ease-out;
+  animation: waterFloatUp 0.38s cubic-bezier(0.18, 0.89, 0.32, 1.15) both;
+  will-change: transform, opacity;
 }
 
-@keyframes popIn {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: scale(1); }
+.load-older-banner {
+  text-align: center;
+  padding: 8px 16px;
+  margin: 6px auto 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #38bdf8;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 90%;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+.load-older-banner:hover {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: rgba(56, 189, 248, 0.55);
+  transform: translateY(-1px);
+}
+
+.load-older-banner:active {
+  transform: scale(0.98);
 }
 
 .bubble .sender-label {

@@ -57,8 +57,19 @@
     </span>
   </div>
 
-  <!-- Messages Area -->
-  <div #messagesContainer class="messages" aria-live="polite">
+  <!-- Messages Area with Lazy Pagination -->
+  <div #messagesContainer class="messages" aria-live="polite" (scroll)="onMessagesScroll($event)">
+    @if (hasMoreOlderMessages) {
+      <div class="load-older-banner" (click)="loadOlderMessages()" title="Load older messages">
+        @if (isLoadingOlderMessages) {
+          <span class="role-spinner"></span>
+          <span>Loading previous messages…</span>
+        } @else {
+          <span>↑ Load older messages ({{ loadedHistoryIndex }} earlier)</span>
+        }
+      </div>
+    }
+
     @if (messages.length === 0) {
     <div class="empty-state">
       <strong>Welcome to QuickChat</strong>

@@ -64,6 +64,13 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   messages: DisplayMessage[] = [];
   draftMessage = '';
 
+  // History Pagination (Loads latest 25 messages, loads older on scroll)
+  private allSortedHistory: EncryptedPayload[] = [];
+  loadedHistoryIndex = 0;
+  isLoadingOlderMessages = false;
+  hasMoreOlderMessages = false;
+  readonly PAGE_SIZE = 25;
+
   // Reply State (WhatsApp Style)
   replyingTo: ReplyQuote | null = null;
 
@@ -193,8 +200,79 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 
   // -------------------------------------------------------------
-  // Chat History Decryption & Synchronization
+  // Chat History Decryption & Synchronization with 25-Message Pagination
   // -------------------------------------------------------------
+  private async decryptSingleMessage(msg: EncryptedPayload): Promise<DisplayMessage | null> {
+    try {
+      if (msg.isAttachment) {
+        const att = msg.attachment;
+        const attData = att?.data || (msg as any).data || '';
+        const caption = (msg as any).caption || att?.meta?.caption || msg.ciphertext || '';
+        const meta: AttachmentMeta = att?.meta || {
+          id: msg.id,
+          fileName: 'image.jpg',
+          fileType: 'image/jpeg',
+          fileSize: 0,
+          totalChunks: 1,
+          isImage: true,
+          iv: '',
+          senderRole: msg.senderRole || this.myRole,
+          sentAt: Number(msg.sentAt) || Date.now(),
+          caption: caption || undefined
+        };
+
+        // If attachment data is already a Data URL (clean unencrypted image)
+        let blobUrl = attData;
+
+        // If it was encrypted with IV and not a Data URL, attempt decrypt fallback
+        if (attData && meta.iv && !attData.startsWith('data:')) {
+          try {
+            const bytes = this.cryptoService.base64ToBytes(attData);
+            const decrypted = await this.cryptoService.decryptBuffer(
+              bytes.buffer,
+              meta.iv,
+              this.encryptionKey!
+            );
+            const blob = new Blob([decrypted], { type: meta.fileType });
+            blobUrl = URL.createObjectURL(blob);
+          } catch (e) {
+            console.warn('Fallback decryption notice:', e);
+          }
+        }
+
+        return {
+          id: msg.id,
+          senderRole: msg.senderRole,
+          sentAt: Number(msg.sentAt) || Date.now(),
+          seen: msg.seen,
+          text: caption || undefined,
+          isAttachment: true,
+          attachment: {
+            meta,
+            progress: 100,
+            statusText: 'Saved in Supabase',
+            isComplete: true,
+            blobUrl: blobUrl || ''
+          }
+        } as DisplayMessage;
+      }
+
+      const decrypted = await this.cryptoService.decryptMessage(msg, this.encryptionKey!);
+      return {
+        id: msg.id,
+        senderRole: msg.senderRole,
+        sentAt: Number(msg.sentAt) || Date.now(),
+        text: decrypted.text,
+        replyTo: decrypted.replyTo,
+        seen: msg.seen,
+        isEdited: Boolean(msg.editedAt),
+        editedAt: msg.editedAt ? Number(msg.editedAt) : undefined
+      } as DisplayMessage;
+    } catch {
+      return null;
+    }
+  }
+
   private async loadAndDecryptHistory(serverMsgs: EncryptedPayload[]): Promise<void> {
     if (!this.encryptionKey) return;
 
@@ -227,81 +305,64 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     }
 
     combined.sort((a, b) => (Number(a.sentAt) || 0) - (Number(b.sentAt) || 0));
+    this.allSortedHistory = combined;
+
+    // Load only the latest 25 messages on initial join for blazing-fast opening
+    let initialBatch: EncryptedPayload[] = [];
+    if (combined.length > this.PAGE_SIZE) {
+      this.loadedHistoryIndex = combined.length - this.PAGE_SIZE;
+      initialBatch = combined.slice(this.loadedHistoryIndex);
+      this.hasMoreOlderMessages = true;
+    } else {
+      this.loadedHistoryIndex = 0;
+      initialBatch = combined;
+      this.hasMoreOlderMessages = false;
+    }
 
     const decryptedList = await Promise.all(
-      combined.map(async msg => {
-        try {
-          if (msg.isAttachment) {
-            const att = msg.attachment;
-            const attData = att?.data || (msg as any).data || '';
-            const caption = (msg as any).caption || att?.meta?.caption || msg.ciphertext || '';
-            const meta: AttachmentMeta = att?.meta || {
-              id: msg.id,
-              fileName: 'image.jpg',
-              fileType: 'image/jpeg',
-              fileSize: 0,
-              totalChunks: 1,
-              isImage: true,
-              iv: '',
-              senderRole: msg.senderRole || this.myRole,
-              sentAt: Number(msg.sentAt) || Date.now(),
-              caption: caption || undefined
-            };
-
-            // If attachment data is already a Data URL (clean unencrypted image)
-            let blobUrl = attData;
-
-            // If it was encrypted with IV and not a Data URL, attempt decrypt fallback
-            if (attData && meta.iv && !attData.startsWith('data:')) {
-              try {
-                const bytes = this.cryptoService.base64ToBytes(attData);
-                const decrypted = await this.cryptoService.decryptBuffer(
-                  bytes.buffer,
-                  meta.iv,
-                  this.encryptionKey!
-                );
-                const blob = new Blob([decrypted], { type: meta.fileType });
-                blobUrl = URL.createObjectURL(blob);
-              } catch (e) {
-                console.warn('Fallback decryption notice:', e);
-              }
-            }
-
-            return {
-              id: msg.id,
-              senderRole: msg.senderRole,
-              sentAt: Number(msg.sentAt) || Date.now(),
-              seen: msg.seen,
-              text: caption || undefined,
-              isAttachment: true,
-              attachment: {
-                meta,
-                progress: 100,
-                statusText: 'Saved in Supabase',
-                isComplete: true,
-                blobUrl: blobUrl || ''
-              }
-            } as DisplayMessage;
-          }
-
-          const decrypted = await this.cryptoService.decryptMessage(msg, this.encryptionKey!);
-          return {
-            id: msg.id,
-            senderRole: msg.senderRole,
-            sentAt: Number(msg.sentAt) || Date.now(),
-            text: decrypted.text,
-            replyTo: decrypted.replyTo,
-            seen: msg.seen,
-            isEdited: Boolean(msg.editedAt),
-            editedAt: msg.editedAt ? Number(msg.editedAt) : undefined
-          } as DisplayMessage;
-        } catch {
-          return null;
-        }
-      })
+      initialBatch.map(msg => this.decryptSingleMessage(msg))
     );
 
     this.messages = decryptedList.filter(m => m !== null) as DisplayMessage[];
+    setTimeout(() => this.scrollToBottom(true), 60);
+  }
+
+  async loadOlderMessages(): Promise<void> {
+    if (this.isLoadingOlderMessages || !this.hasMoreOlderMessages || this.loadedHistoryIndex <= 0) {
+      return;
+    }
+
+    this.isLoadingOlderMessages = true;
+    const container = this.messagesContainer?.nativeElement;
+    const prevScrollHeight = container ? container.scrollHeight : 0;
+    const prevScrollTop = container ? container.scrollTop : 0;
+
+    const nextIndex = Math.max(0, this.loadedHistoryIndex - this.PAGE_SIZE);
+    const olderBatch = this.allSortedHistory.slice(nextIndex, this.loadedHistoryIndex);
+    this.loadedHistoryIndex = nextIndex;
+    this.hasMoreOlderMessages = this.loadedHistoryIndex > 0;
+
+    const decryptedList = await Promise.all(
+      olderBatch.map(msg => this.decryptSingleMessage(msg))
+    );
+    const validOlder = decryptedList.filter(m => m !== null) as DisplayMessage[];
+
+    this.messages = [...validOlder, ...this.messages];
+
+    setTimeout(() => {
+      if (container) {
+        const newScrollHeight = container.scrollHeight;
+        container.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+      }
+      this.isLoadingOlderMessages = false;
+    }, 60);
+  }
+
+  onMessagesScroll(event: Event): void {
+    const el = event.target as HTMLElement;
+    if (el && el.scrollTop <= 80 && this.hasMoreOlderMessages && !this.isLoadingOlderMessages) {
+      this.loadOlderMessages();
+    }
   }
 
   // -------------------------------------------------------------
@@ -1277,12 +1338,23 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 }
 
-  private scrollToBottom(): void {
+  private scrollToBottom(instant = false): void {
     setTimeout(() => {
       if (this.messagesContainer?.nativeElement) {
-        this.messagesContainer.nativeElement.scrollTop = this.messagesContainer.nativeElement.scrollHeight;
+        if (instant) {
+          this.messagesContainer.nativeElement.scrollTop = this.messagesContainer.nativeElement.scrollHeight;
+        } else {
+          try {
+            this.messagesContainer.nativeElement.scrollTo({
+              top: this.messagesContainer.nativeElement.scrollHeight,
+              behavior: 'smooth'
+            });
+          } catch {
+            this.messagesContainer.nativeElement.scrollTop = this.messagesContainer.nativeElement.scrollHeight;
+          }
+        }
       }
-    }, 10);
+    }, 20);
   }
 
   formatMessageDateTime(input: number): string {
