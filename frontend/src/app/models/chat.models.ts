@@ -10,6 +10,7 @@ export interface AttachmentMeta {
   iv: string;
   senderRole: Role;
   sentAt: number;
+  caption?: string;
 }
 
 export interface AttachmentState {

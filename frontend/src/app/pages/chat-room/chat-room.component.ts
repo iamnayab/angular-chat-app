@@ -12,6 +12,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
+import { MatSnackBar } from '@angular/material/snack-bar';
 
 import {
   Role,
@@ -119,8 +120,18 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     private socketService: SocketService,
     private storageService: StorageService,
     private audioService: AudioService,
-    public webrtcService: WebRtcService
+    public webrtcService: WebRtcService,
+    private snackBar: MatSnackBar
   ) {}
+
+  showWarning(message: string): void {
+    this.snackBar.open(message, 'Close', {
+      duration: 3000,
+      verticalPosition: 'top',
+      horizontalPosition: 'center',
+      panelClass: ['warning-snackbar']
+    });
+  }
 
   ngOnInit(): void {
     this.setupSocketSubscriptions();
@@ -192,13 +203,16 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
     for (const sm of serverMsgs) {
       const existing = combined.find(
-        m => (m.id && sm.id && m.id === sm.id) || m.ciphertext === sm.ciphertext
+        m => (m.id && sm.id && m.id === sm.id) ||
+             (m.ciphertext && sm.ciphertext && m.ciphertext.trim() !== '' && m.ciphertext === sm.ciphertext)
       );
       if (existing) {
         existing.seen = Boolean(existing.seen || sm.seen);
         existing.sentAt = Number(sm.sentAt) || Number(existing.sentAt) || Date.now();
         existing.id = sm.id || existing.id;
         existing.editedAt = sm.editedAt ? Number(sm.editedAt) : existing.editedAt;
+        if (sm.attachment) existing.attachment = sm.attachment;
+        if (sm.isAttachment) existing.isAttachment = true;
         this.storageService.saveLocalMessage(existing);
       } else {
         const item: EncryptedPayload = {
@@ -217,32 +231,55 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     const decryptedList = await Promise.all(
       combined.map(async msg => {
         try {
-          if (msg.isAttachment && msg.attachment) {
-            const meta = msg.attachment.meta;
-            let blobUrl = this.ephemeralBlobs.get(msg.id)?.blobUrl;
-            if (!blobUrl && msg.attachment.data) {
-              const bytes = this.cryptoService.base64ToBytes(msg.attachment.data);
-              const decrypted = await this.cryptoService.decryptBuffer(
-                bytes.buffer,
-                meta.iv,
-                this.encryptionKey!
-              );
-              const blob = new Blob([decrypted], { type: meta.fileType });
-              blobUrl = URL.createObjectURL(blob);
-              this.ephemeralBlobs.set(msg.id, { blobUrl, blob, fileName: meta.fileName });
+          if (msg.isAttachment) {
+            const att = msg.attachment;
+            const attData = att?.data || (msg as any).data || '';
+            const caption = (msg as any).caption || att?.meta?.caption || msg.ciphertext || '';
+            const meta: AttachmentMeta = att?.meta || {
+              id: msg.id,
+              fileName: 'image.jpg',
+              fileType: 'image/jpeg',
+              fileSize: 0,
+              totalChunks: 1,
+              isImage: true,
+              iv: '',
+              senderRole: msg.senderRole || this.myRole,
+              sentAt: Number(msg.sentAt) || Date.now(),
+              caption: caption || undefined
+            };
+
+            // If attachment data is already a Data URL (clean unencrypted image)
+            let blobUrl = attData;
+
+            // If it was encrypted with IV and not a Data URL, attempt decrypt fallback
+            if (attData && meta.iv && !attData.startsWith('data:')) {
+              try {
+                const bytes = this.cryptoService.base64ToBytes(attData);
+                const decrypted = await this.cryptoService.decryptBuffer(
+                  bytes.buffer,
+                  meta.iv,
+                  this.encryptionKey!
+                );
+                const blob = new Blob([decrypted], { type: meta.fileType });
+                blobUrl = URL.createObjectURL(blob);
+              } catch (e) {
+                console.warn('Fallback decryption notice:', e);
+              }
             }
+
             return {
               id: msg.id,
               senderRole: msg.senderRole,
               sentAt: Number(msg.sentAt) || Date.now(),
               seen: msg.seen,
+              text: caption || undefined,
               isAttachment: true,
               attachment: {
                 meta,
                 progress: 100,
                 statusText: 'Saved in Supabase',
                 isComplete: true,
-                blobUrl
+                blobUrl: blobUrl || ''
               }
             } as DisplayMessage;
           }
@@ -473,7 +510,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   startCall(type: 'audio' | 'video'): void {
     if (!this.isPartnerOnline) {
       const partner = this.myRole === 'he' ? 'Elira' : 'Harry';
-      alert(`${partner} is offline right now. Cannot start call.`);
+      this.showWarning(`${partner} is offline right now. Cannot start call.`);
       return;
     }
     const partnerRole = this.myRole === 'he' ? 'she' : 'he';
@@ -522,6 +559,75 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
         } catch (err) {
           console.warn('Failed to decrypt incoming message:', err);
         }
+      })
+    );
+
+    // 2b. Incoming Direct Image Message (Instant WhatsApp Style)
+    this.subs.add(
+      this.socketService.chatImage$.subscribe((payload) => {
+        if (!payload || !payload.id) return;
+        if (this.messages.some(m => m.id === payload.id)) return;
+
+        const sentAt = Number(payload.sentAt) || Date.now();
+        const caption = typeof payload.caption === 'string' ? payload.caption.trim() : '';
+
+        this.messages.push({
+          id: payload.id,
+          senderRole: payload.senderRole,
+          sentAt,
+          text: caption || undefined,
+          isAttachment: true,
+          seen: false,
+          attachment: {
+            meta: {
+              id: payload.id,
+              fileName: payload.fileName || 'image.jpg',
+              fileType: payload.fileType || 'image/jpeg',
+              fileSize: payload.fileSize || 0,
+              totalChunks: 1,
+              isImage: true,
+              iv: '',
+              senderRole: payload.senderRole,
+              sentAt,
+              caption
+            },
+            progress: 100,
+            statusText: 'Received',
+            isComplete: true,
+            blobUrl: payload.data
+          }
+        });
+
+        // Also save into local cache for instant reload
+        this.storageService.saveLocalMessage({
+          id: payload.id,
+          roomId: payload.roomId || this.roomId,
+          iv: '',
+          ciphertext: caption,
+          senderRole: payload.senderRole,
+          sentAt,
+          seen: false,
+          isAttachment: true,
+          attachment: {
+            meta: {
+              id: payload.id,
+              fileName: payload.fileName || 'image.jpg',
+              fileType: payload.fileType || 'image/jpeg',
+              fileSize: payload.fileSize || 0,
+              totalChunks: 1,
+              isImage: true,
+              iv: '',
+              senderRole: payload.senderRole,
+              sentAt,
+              caption
+            },
+            data: payload.data
+          }
+        });
+
+        this.isTypingIndicatorVisible = false;
+        this.scrollToBottom();
+        this.socketService.markSeen();
       })
     );
 
@@ -717,16 +823,28 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------
   // Clear Chat History & Leave
   // -------------------------------------------------------------
-  async clearChat(): Promise<void> {
-    if (!confirm('Are you sure you want to permanently delete all chat history?')) return;
+  clearChat(): void {
+    const snackRef = this.snackBar.open(
+      '⚠️ Permanently delete all chat history in this room?',
+      'CLEAR ALL',
+      {
+        duration: 6000,
+        verticalPosition: 'top',
+        horizontalPosition: 'center',
+        panelClass: ['warning-snackbar', 'danger-snackbar']
+      }
+    );
 
-    const res = await this.socketService.clearRoom();
-    if (res?.ok) {
-      this.storageService.clearLocalMessages();
-      this.clearAllBlobs();
-      this.messages = [];
-      this.addSystemNote('Chat history was cleared.');
-    }
+    snackRef.onAction().subscribe(async () => {
+      const res = await this.socketService.clearRoom();
+      if (res?.ok) {
+        this.storageService.clearLocalMessages();
+        this.clearAllBlobs();
+        this.messages = [];
+        this.addSystemNote('Chat history was cleared.');
+        this.showWarning('Chat history has been cleared permanently.');
+      }
+    });
   }
 
   leaveRoom(): void {
@@ -751,7 +869,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
   handleFileSelection(file: File): void {
     if (file.size > MAX_FILE_SIZE) {
-      alert(`⚠️ File is too large (${this.formatBytes(file.size)}). Max allowed is 25 MB.`);
+      this.showWarning(`⚠️ File is too large (${this.formatBytes(file.size)}). Max allowed is 25 MB.`);
       return;
     }
 
@@ -781,20 +899,89 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     this.isSendingAttachment = false;
   }
 
-  async sendStagedAttachment(): Promise<void> {
+  async sendStagedAttachment(caption: string = ''): Promise<void> {
     const file = this.stagedFile;
-    if (!file || !this.encryptionKey || !this.myRole) return;
+    if (!file || !this.myRole) return;
 
+    const trimmedCaption = (caption || '').trim();
     this.isSendingAttachment = true;
 
     try {
-      const fileBuffer = await file.arrayBuffer();
       const fileSize = file.size;
       const fileName = file.name;
       const fileType = file.type || 'application/octet-stream';
-      const isImage = file.type.startsWith('image/');
+      const isImage = this.stagedFileIsImage || file.type.startsWith('image/');
       const sentAt = Date.now();
       const id = crypto.randomUUID ? crypto.randomUUID() : `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+      // Direct WhatsApp-Style Image Sending (Saved permanently in Supabase, renders directly in chat with caption)
+      if (isImage) {
+        const dataUrl = await this.readImageAsDataUrl(file);
+        this.closePreviewModal();
+
+        const msgItem: DisplayMessage = {
+          id,
+          senderRole: this.myRole,
+          sentAt,
+          text: trimmedCaption || undefined,
+          isAttachment: true,
+          attachment: {
+            meta: {
+              id,
+              fileName,
+              fileType,
+              fileSize,
+              totalChunks: 1,
+              isImage: true,
+              iv: '',
+              senderRole: this.myRole,
+              sentAt,
+              caption: trimmedCaption
+            },
+            progress: 100,
+            statusText: 'Sent',
+            isComplete: true,
+            blobUrl: dataUrl
+          }
+        };
+
+        this.messages.push(msgItem);
+        this.scrollToBottom();
+
+        // Save locally for instant reload
+        this.storageService.saveLocalMessage({
+          id,
+          roomId: this.roomId,
+          iv: '',
+          ciphertext: trimmedCaption,
+          senderRole: this.myRole,
+          sentAt,
+          seen: false,
+          isAttachment: true,
+          attachment: {
+            meta: msgItem.attachment!.meta,
+            data: dataUrl
+          }
+        });
+
+        await this.socketService.sendImageMessage({
+          id,
+          roomId: this.roomId,
+          fileName,
+          fileType,
+          fileSize,
+          senderRole: this.myRole,
+          sentAt,
+          data: dataUrl,
+          caption: trimmedCaption
+        });
+
+        this.isSendingAttachment = false;
+        return;
+      }
+
+      if (!this.encryptionKey) return;
+      const fileBuffer = await file.arrayBuffer();
 
       // 1. Encrypt raw binary file data with AES-256-GCM
       const encrypted = await this.cryptoService.encryptBuffer(fileBuffer, this.encryptionKey);
@@ -885,9 +1072,48 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
       this.scrollToBottom();
     } catch (err: any) {
       console.error('Attachment send error:', err);
-      alert('Failed to encrypt and send file: ' + (err.message || err));
+      this.showWarning('Failed to encrypt and send file: ' + (err.message || err));
+    } finally {
       this.isSendingAttachment = false;
     }
+  }
+
+  private readImageAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rawResult = reader.result as string;
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1280;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.85));
+          } else {
+            resolve(rawResult);
+          }
+        };
+        img.onerror = () => resolve(rawResult);
+        img.src = rawResult;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   // -------------------------------------------------------------

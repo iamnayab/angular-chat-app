@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subscription } from 'rxjs';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { ActiveCall, Role } from '../models/chat.models';
 import { SocketService } from './socket.service';
 
@@ -26,8 +27,20 @@ export class WebRtcService {
   private callTimer: any = null;
   private subs = new Subscription();
 
-  constructor(private socketService: SocketService) {
+  constructor(
+    private socketService: SocketService,
+    private snackBar: MatSnackBar
+  ) {
     this.initSocketListeners();
+  }
+
+  showWarning(message: string): void {
+    this.snackBar.open(message, 'Close', {
+      duration: 3000,
+      verticalPosition: 'top',
+      horizontalPosition: 'center',
+      panelClass: ['warning-snackbar']
+    });
   }
 
   private initSocketListeners(): void {
@@ -88,14 +101,14 @@ export class WebRtcService {
 
     this.subs.add(
       this.socketService.callRejected$.subscribe(() => {
-        alert('Call was declined.');
+        this.showWarning('Call was declined.');
         this.cleanupCall('ended');
       })
     );
 
     this.subs.add(
       this.socketService.callFailed$.subscribe(({ reason }) => {
-        alert(reason === 'partner_offline' ? 'Partner is currently offline.' : 'Call failed.');
+        this.showWarning(reason === 'partner_offline' ? 'Partner is currently offline.' : 'Call failed.');
         this.cleanupCall('ended');
       })
     );
@@ -118,6 +131,14 @@ export class WebRtcService {
 
     try {
       await this.acquireUserMedia(isVideo);
+
+      // Disable audio track during 'calling' state so voice does NOT leak before call is answered!
+      if (this.localStream) {
+        this.localStream.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
+
       this.createPeerConnection(partnerRole);
 
       // Add local tracks to peer connection
@@ -142,7 +163,7 @@ export class WebRtcService {
       });
     } catch (err: any) {
       console.error('Failed to start call:', err);
-      alert('Could not access microphone/camera: ' + (err.message || err));
+      this.showWarning('Could not access microphone/camera: ' + (err.message || err));
       this.cleanupCall('ended');
     }
   }
@@ -163,7 +184,10 @@ export class WebRtcService {
 
       await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(incomingOffer));
 
-      const answer = await this.peerConnection!.createAnswer();
+      const answer = await this.peerConnection!.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: call.isVideo
+      });
       await this.peerConnection!.setLocalDescription(answer);
 
       this.socketService.answerCall({
@@ -175,7 +199,7 @@ export class WebRtcService {
       this.setConnectedState();
     } catch (err: any) {
       console.error('Failed to accept call:', err);
-      alert('Error accepting call: ' + (err.message || err));
+      this.showWarning('Error accepting call: ' + (err.message || err));
       this.rejectCall();
     }
   }
@@ -226,7 +250,11 @@ export class WebRtcService {
 
   private async acquireUserMedia(video: boolean): Promise<void> {
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      },
       video: video ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
     });
     this.localStream$.next(this.localStream);
@@ -238,9 +266,12 @@ export class WebRtcService {
     this.remoteStream$.next(this.remoteStream);
 
     this.peerConnection.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        this.remoteStream?.addTrack(track);
-      });
+      if (event.streams && event.streams[0]) {
+        this.remoteStream = event.streams[0];
+      } else {
+        if (!this.remoteStream) this.remoteStream = new MediaStream();
+        this.remoteStream.addTrack(event.track);
+      }
       this.remoteStream$.next(this.remoteStream);
     };
 
@@ -266,6 +297,14 @@ export class WebRtcService {
       this.activeCall$.next({ ...call, status: 'connected' });
     }
 
+    // Now that call is officially answered and connected, un-mute local microphone!
+    if (this.localStream) {
+      const isMuted = this.activeCall$.value?.isMuted || false;
+      this.localStream.getAudioTracks().forEach((track) => {
+        track.enabled = !isMuted;
+      });
+    }
+
     if (this.callTimer) clearInterval(this.callTimer);
     this.callTimer = setInterval(() => {
       const c = this.activeCall$.value;
@@ -282,12 +321,17 @@ export class WebRtcService {
     }
 
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream.getTracks().forEach((track) => {
+        track.stop();
+        track.enabled = false;
+      });
       this.localStream = null;
       this.localStream$.next(null);
     }
 
     if (this.peerConnection) {
+      this.peerConnection.ontrack = null;
+      this.peerConnection.onicecandidate = null;
       this.peerConnection.close();
       this.peerConnection = null;
     }

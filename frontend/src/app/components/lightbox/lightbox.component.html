@@ -1,22 +1,70 @@
 @if (show) {
   <div class="attachment-lightbox-overlay" (click)="onClose()">
     <div class="attachment-lightbox-topbar" (click)="$event.stopPropagation()">
-      <div class="attachment-lightbox-title">{{ title }}</div>
+      <div class="attachment-lightbox-title">{{ title || 'Photo' }}</div>
       <div class="attachment-lightbox-actions">
+        <!-- Zoom Out Button -->
         <button
           type="button"
-          class="attachment-lightbox-save-btn"
-          (click)="onDownload()"
+          class="attachment-lightbox-zoom-btn"
+          title="Zoom Out"
+          (click)="zoomOut()"
         >
-          📥 Save to Device
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <line x1="8" y1="11" x2="14" y2="11"/>
+          </svg>
         </button>
-        <button type="button" class="attachment-lightbox-close-btn" (click)="onClose()">
+
+        <!-- Reset Zoom (shows current zoom percentage) -->
+        <button
+          type="button"
+          class="attachment-lightbox-zoom-btn zoom-level-badge"
+          title="Reset Zoom"
+          (click)="resetZoom()"
+        >
+          {{ Math.round(zoomLevel * 100) }}%
+        </button>
+
+        <!-- Zoom In Button -->
+        <button
+          type="button"
+          class="attachment-lightbox-zoom-btn"
+          title="Zoom In"
+          (click)="zoomIn()"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <line x1="11" y1="8" x2="11" y2="14"/>
+            <line x1="8" y1="11" x2="14" y2="11"/>
+          </svg>
+        </button>
+
+        <!-- Close Button -->
+        <button
+          type="button"
+          class="attachment-lightbox-close-btn"
+          title="Close Viewer"
+          (click)="onClose()"
+        >
           ✕
         </button>
       </div>
     </div>
-    <div class="attachment-lightbox-body">
-      <img class="attachment-lightbox-img" [src]="imageUrl" [alt]="title" />
+
+    <!-- Lightbox Image Viewport with Pan/Zoom -->
+    <div class="attachment-lightbox-body" (click)="onClose()">
+      <img
+        class="attachment-lightbox-img"
+        [src]="imageUrl"
+        [alt]="title || 'Photo'"
+        [style.transform]="'scale(' + zoomLevel + ')'"
+        [style.cursor]="zoomLevel > 1 ? 'zoom-out' : 'zoom-in'"
+        (click)="toggleZoom($event)"
+        (wheel)="onWheel($event)"
+      />
     </div>
   </div>
 }

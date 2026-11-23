@@ -12,6 +12,7 @@ export class SocketService {
   public connect$ = new Subject<void>();
   public disconnect$ = new Subject<void>();
   public chatMessage$ = new Subject<EncryptedPayload>();
+  public chatImage$ = new Subject<any>();
   public messageEdited$ = new Subject<EncryptedPayload>();
   public messagesSeen$ = new Subject<{ seenBy: Role; at: number }>();
   public userStatus$ = new Subject<{ role: Role; isOnline: boolean; lastSeen?: number }>();
@@ -56,6 +57,7 @@ export class SocketService {
     this.socket.on('disconnect', () => this.disconnect$.next());
 
     this.socket.on('chat-message', (data: EncryptedPayload) => this.chatMessage$.next(data));
+    this.socket.on('chat-image', (data: any) => this.chatImage$.next(data));
     this.socket.on('message-edited', (data: EncryptedPayload) => this.messageEdited$.next(data));
     this.socket.on('messages-seen', (data: { seenBy: Role; at: number }) => this.messagesSeen$.next(data));
     this.socket.on('user-status', (data: { role: Role; isOnline: boolean; lastSeen?: number }) => this.userStatus$.next(data));
@@ -93,6 +95,14 @@ export class SocketService {
   sendChatMessage(msg: EncryptedPayload): Promise<{ ok: boolean; id?: string; sentAt?: number; error?: string }> {
     return new Promise((resolve) => {
       this.socket.emit('chat-message', msg, (res: { ok: boolean; id?: string; sentAt?: number; error?: string }) => {
+        resolve(res || { ok: false });
+      });
+    });
+  }
+
+  sendImageMessage(payload: any): Promise<{ ok: boolean; id?: string; sentAt?: number; error?: string }> {
+    return new Promise((resolve) => {
+      this.socket.emit('chat-image', payload, (res: { ok: boolean; id?: string; sentAt?: number; error?: string }) => {
         resolve(res || { ok: false });
       });
     });

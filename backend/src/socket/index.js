@@ -9,6 +9,7 @@ const crypto = require("crypto");
 const { checkRateLimit, verifyRoomCredentials, EXPECTED_ROOM_HASH } = require("../utils/security");
 const {
   saveEncryptedMessage,
+  saveAttachment,
   editEncryptedMessage,
   getRoomMessages,
   markMessagesAsSeen,
@@ -186,6 +187,93 @@ function setupSocketIO(httpServer) {
 
       if (typeof reply === "function") {
         reply({ ok: true, id: messageId, sentAt });
+      }
+    });
+
+    /**
+     * Direct Image Message Relay & Permanent Supabase Storage (WhatsApp Style with Caption)
+     */
+    socket.on("chat-image", async (payload, reply = () => {}) => {
+      const role = socket.data.role || (payload && payload.senderRole);
+      const roomId = String(socket.data.roomId || (payload && payload.roomId) || "0202").trim();
+
+      if (role && !socket.data.role) {
+        socket.data.role = role;
+        roomMembers.set(role, socket.id);
+      }
+      if (roomId && (!socket.data.roomId || !socket.rooms.has(roomId))) {
+        socket.data.roomId = roomId;
+        socket.join(roomId);
+      }
+
+      if (!role || !payload || !payload.data) {
+        if (typeof reply === "function") reply({ ok: false, error: "Invalid image payload." });
+        return;
+      }
+
+      const sentAt = Number(payload.sentAt) || Date.now();
+      const messageId = payload.id || `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const caption = typeof payload.caption === "string" ? payload.caption.trim().slice(0, 1000) : "";
+
+      console.log(`🖼️ [Socket Image] Received from ${role} in room "${roomId}" (Caption: "${caption}"). Saving...`);
+
+      // Persist permanently in Supabase Database (attachments + messages table)
+      await saveAttachment({
+        id: messageId,
+        roomId,
+        senderRole: role,
+        fileName: payload.fileName || "image.jpg",
+        fileType: payload.fileType || "image/jpeg",
+        fileSize: payload.fileSize || 0,
+        totalChunks: 1,
+        isImage: true,
+        iv: "",
+        data: payload.data, // Clean base64 Data URL
+        caption,
+        createdAt: sentAt
+      });
+
+      // Update user active timestamp
+      saveUserLastSeen(roomId, role, sentAt);
+
+      const imagePayload = {
+        id: messageId,
+        roomId,
+        senderRole: role,
+        fileName: payload.fileName || "image.jpg",
+        fileType: payload.fileType || "image/jpeg",
+        fileSize: payload.fileSize || 0,
+        isImage: true,
+        data: payload.data,
+        caption,
+        sentAt,
+        seen: false
+      };
+
+      // 1. Relay to partner in the room
+      socket.to(roomId).emit("chat-image", imagePayload);
+
+      // 2. Also emit directly to partner socket if available
+      const partnerRole = role === "he" ? "she" : "he";
+      const partnerSocketId = roomMembers.get(partnerRole);
+      if (partnerSocketId && partnerSocketId !== socket.id) {
+        io.to(partnerSocketId).emit("chat-image", imagePayload);
+      }
+
+      // FCM push notification to partner
+      const senderName = role === "he" ? "Harry" : "Elira";
+      sendPushNotification({
+        targetRole: partnerRole,
+        roomId,
+        type: "message",
+        senderName,
+        senderRole: role,
+        title: `📷 Photo from ${senderName}`,
+        body: caption ? `${senderName}: ${caption}` : "Tap to view photo"
+      }).catch(err => console.warn("Background FCM image push error:", err.message));
+
+      if (typeof reply === "function") {
+        reply({ ok: true, id: messageId, sentAt, caption });
       }
     });
 

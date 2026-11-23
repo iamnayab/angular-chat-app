@@ -22,8 +22,16 @@
         </div>
       }
 
-      <div class="attachment-privacy-badge">
-        🔒 <span>End-to-End Encrypted. Saved permanently in Supabase Database.</span>
+      <!-- WhatsApp-Style Caption Input -->
+      <div class="attachment-caption-container">
+        <input
+          type="text"
+          class="attachment-caption-input"
+          [(ngModel)]="caption"
+          placeholder="Add a caption…"
+          (keydown.enter)="onSend()"
+          maxlength="500"
+        />
       </div>
 
       @if (error) {

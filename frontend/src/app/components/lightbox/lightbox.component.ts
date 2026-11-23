@@ -14,13 +14,43 @@ export class LightboxComponent {
   @Input() title = '';
 
   @Output() close = new EventEmitter<void>();
-  @Output() download = new EventEmitter<{ url: string; title: string }>();
+
+  zoomLevel = 1;
+  readonly Math = Math;
 
   onClose(): void {
+    this.zoomLevel = 1;
     this.close.emit();
   }
 
-  onDownload(): void {
-    this.download.emit({ url: this.imageUrl, title: this.title });
+  zoomIn(): void {
+    this.zoomLevel = Math.min(Number((this.zoomLevel + 0.3).toFixed(2)), 4);
+  }
+
+  zoomOut(): void {
+    this.zoomLevel = Math.max(Number((this.zoomLevel - 0.3).toFixed(2)), 0.6);
+  }
+
+  resetZoom(): void {
+    this.zoomLevel = 1;
+  }
+
+  toggleZoom(event: MouseEvent): void {
+    event.stopPropagation();
+    if (this.zoomLevel > 1) {
+      this.zoomLevel = 1;
+    } else {
+      this.zoomLevel = 2;
+    }
+  }
+
+  onWheel(event: WheelEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.deltaY < 0) {
+      this.zoomIn();
+    } else {
+      this.zoomOut();
+    }
   }
 }

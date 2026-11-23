@@ -251,9 +251,10 @@ async function saveEncryptedMessage({ id, roomId, iv, ciphertext, senderRole, se
 /**
  * Save encrypted attachment / picture permanently in Supabase
  */
-async function saveAttachment({ id, roomId, senderRole, fileName, fileType, fileSize, totalChunks, isImage, iv, data, createdAt = Date.now() }) {
+async function saveAttachment({ id, roomId, senderRole, fileName, fileType, fileSize, totalChunks, isImage, iv, data, caption = "", createdAt = Date.now() }) {
   const targetRoomId = String(roomId || "0202").trim();
   const numericCreatedAt = Number(createdAt) || Date.now();
+  const safeCaption = String(caption || "").trim();
 
   if (usePostgres && pgPool) {
     try {
@@ -277,12 +278,12 @@ async function saveAttachment({ id, roomId, senderRole, fileName, fileType, file
         ]
       );
 
-      // 2. Also register in messages timeline
+      // 2. Also register in messages timeline (stores caption in ciphertext column)
       await pgPool.query(
         `INSERT INTO messages (id, room_id, iv, ciphertext, sender_role, created_at, seen, is_attachment)
-         VALUES ($1, $2, $3, '', $4, $5, FALSE, TRUE)
-         ON CONFLICT (id) DO NOTHING`,
-        [id, targetRoomId, iv, senderRole, numericCreatedAt]
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE, TRUE)
+         ON CONFLICT (id) DO UPDATE SET ciphertext = EXCLUDED.ciphertext`,
+        [id, targetRoomId, iv, safeCaption, senderRole, numericCreatedAt]
       );
 
       return { success: true, db: "postgres" };
@@ -307,6 +308,7 @@ async function saveAttachment({ id, roomId, senderRole, fileName, fileType, file
     isImage: Boolean(isImage),
     iv,
     data,
+    caption: safeCaption,
     createdAt: numericCreatedAt
   };
 
@@ -322,7 +324,7 @@ async function saveAttachment({ id, roomId, senderRole, fileName, fileType, file
     id,
     roomId: targetRoomId,
     iv,
-    ciphertext: "",
+    ciphertext: safeCaption,
     senderRole,
     sentAt: numericCreatedAt,
     seen: false,
