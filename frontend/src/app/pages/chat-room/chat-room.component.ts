@@ -60,6 +60,17 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   peopleCount = 1;
   connectionText = 'Connecting…';
 
+  // Unread Tracking & Alerts
+  unreadCount = 0;
+  firstUnreadMessageId: string | null = null;
+  showScrollToBottomPill = false;
+  private readonly originalDocumentTitle = 'QuickChat • Encrypted Room';
+  private titleBlinkInterval: any = null;
+
+  // Message Selection & Deletion
+  isSelectionMode = false;
+  selectedMessageIds = new Set<string>();
+
   // Chat messages
   messages: DisplayMessage[] = [];
   draftMessage = '';
@@ -157,6 +168,10 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
       this.scrollToBottom();
     }, 100);
 
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
     this.relativeTimeInterval = setInterval(() => {
       if (!this.isPartnerOnline && this.partnerLastSeen) {
         this.updatePresenceText();
@@ -166,8 +181,23 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.subs.unsubscribe();
+    this.stopTitleAlert();
     if (this.relativeTimeInterval) clearInterval(this.relativeTimeInterval);
     this.clearAllBlobs();
+  }
+
+  @HostListener('window:focus')
+  onWindowFocus(): void {
+    this.stopTitleAlert();
+    this.socketService.markSeen();
+  }
+
+  @HostListener('document:visibilitychange')
+  onVisibilityChange(): void {
+    if (!document.hidden) {
+      this.stopTitleAlert();
+      this.socketService.markSeen();
+    }
   }
 
   // -------------------------------------------------------------
@@ -324,6 +354,14 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     );
 
     this.messages = decryptedList.filter(m => m !== null) as DisplayMessage[];
+
+    // Track unread messages on opening chat
+    const unreadMsgs = this.messages.filter(m => m.senderRole !== this.myRole && !m.seen);
+    if (unreadMsgs.length > 0) {
+      this.firstUnreadMessageId = unreadMsgs[0].id;
+      this.unreadCount = unreadMsgs.length;
+    }
+
     setTimeout(() => this.scrollToBottom(true), 60);
   }
 
@@ -360,8 +398,18 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
   onMessagesScroll(event: Event): void {
     const el = event.target as HTMLElement;
-    if (el && el.scrollTop <= 80 && this.hasMoreOlderMessages && !this.isLoadingOlderMessages) {
+    if (!el) return;
+
+    if (el.scrollTop <= 80 && this.hasMoreOlderMessages && !this.isLoadingOlderMessages) {
       this.loadOlderMessages();
+    }
+
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (isNearBottom) {
+      this.showScrollToBottomPill = false;
+      if (document.hasFocus()) {
+        this.socketService.markSeen();
+      }
     }
   }
 
@@ -390,6 +438,8 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
     const replySnapshot = this.replyingTo ? { ...this.replyingTo } : undefined;
     this.replyingTo = null;
+    this.firstUnreadMessageId = null;
+    this.unreadCount = 0;
 
     try {
       const payloadData: MessagePayloadData = {
@@ -564,6 +614,8 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
     let snippet = msg.text || '';
     if (msg.isAttachment) {
       snippet = msg.attachment?.meta.isImage ? '🖼️ Photo' : `📎 ${msg.attachment?.meta.fileName || 'Attachment'}`;
+    } else if (snippet.length > 80) {
+      snippet = snippet.slice(0, 80) + '…';
     }
 
     this.replyingTo = {
@@ -657,10 +709,12 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
           this.storageService.saveLocalMessage({ ...payload, sentAt });
           this.isTypingIndicatorVisible = false;
-          this.scrollToBottom();
 
-          // Acknowledge read receipt
-          this.socketService.markSeen();
+          // Sound chime
+          this.audioService.playMessageChime();
+
+          // Unread tracking & Notifications
+          this.handleIncomingNotification(payload.senderRole, decrypted.text, payload.id);
         } catch (err) {
           console.warn('Failed to decrypt incoming message:', err);
         }
@@ -731,8 +785,12 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
         });
 
         this.isTypingIndicatorVisible = false;
-        this.scrollToBottom();
-        this.socketService.markSeen();
+
+        // Sound chime
+        this.audioService.playMessageChime();
+
+        // Unread tracking & Notifications
+        this.handleIncomingNotification(payload.senderRole, caption || 'Photo', payload.id);
       })
     );
 
@@ -836,7 +894,21 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
         this.storageService.clearLocalMessages();
         this.clearAllBlobs();
         this.messages = [];
+        this.allSortedHistory = [];
+        this.loadedHistoryIndex = 0;
+        this.hasMoreOlderMessages = false;
+        this.isLoadingOlderMessages = false;
+        this.firstUnreadMessageId = null;
+        this.unreadCount = 0;
+        this.cancelSelection();
         this.addSystemNote('Your partner cleared the chat history.');
+      })
+    );
+
+    // 8b. Messages Deleted
+    this.subs.add(
+      this.socketService.messagesDeleted$.subscribe(({ messageIds }) => {
+        this.handleMessagesDeleted(messageIds);
       })
     );
 
@@ -930,10 +1002,12 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
           // Acknowledge to server so server frees in-memory RAM buffer
           this.socketService.ackAttachment(id);
-          this.socketService.markSeen();
+
+          // Notification sound & alert
+          this.audioService.playMessageChime();
+          this.handleIncomingNotification(meta.senderRole, meta.fileName || 'Attachment', id);
 
           this.inFlightIncoming.delete(id);
-          this.scrollToBottom();
         } catch (err) {
           console.error('Failed to decrypt received attachment:', err);
           if (messageRef.attachment) {
@@ -977,10 +1051,184 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
         this.storageService.clearLocalMessages();
         this.clearAllBlobs();
         this.messages = [];
+        this.allSortedHistory = [];
+        this.loadedHistoryIndex = 0;
+        this.hasMoreOlderMessages = false;
+        this.isLoadingOlderMessages = false;
+        this.firstUnreadMessageId = null;
+        this.unreadCount = 0;
+        this.cancelSelection();
         this.addSystemNote('Chat history was cleared.');
         this.showWarning('Chat history has been cleared permanently.');
       }
     });
+  }
+
+  // -------------------------------------------------------------
+  // Unread Tracking & Title Alert Helpers
+  // -------------------------------------------------------------
+  private handleIncomingNotification(senderRole: Role, text?: string, messageId?: string): void {
+    const senderName = senderRole === 'he' ? 'Harry' : 'Elira';
+    const isDocHidden = document.hidden || !document.hasFocus();
+    const container = this.messagesContainer?.nativeElement;
+    const isScrolledUp = container ? (container.scrollHeight - container.scrollTop - container.clientHeight > 150) : false;
+
+    if (isDocHidden || isScrolledUp) {
+      this.unreadCount++;
+      if (!this.firstUnreadMessageId && messageId) {
+        this.firstUnreadMessageId = messageId;
+      }
+      if (isScrolledUp) {
+        this.showScrollToBottomPill = true;
+      }
+      if (isDocHidden) {
+        this.startTitleAlert(senderName);
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification(`New message from ${senderName}`, {
+              body: text || 'New encrypted message',
+              icon: '/favicon.ico'
+            });
+          } catch {}
+        }
+      }
+    } else {
+      this.scrollToBottom();
+      this.socketService.markSeen();
+    }
+  }
+
+  private startTitleAlert(senderName: string): void {
+    if (this.titleBlinkInterval) clearInterval(this.titleBlinkInterval);
+    let toggle = false;
+    this.titleBlinkInterval = setInterval(() => {
+      document.title = toggle ? `💬 (${this.unreadCount}) New message!` : `QuickChat • ${senderName}`;
+      toggle = !toggle;
+    }, 1200);
+  }
+
+  private stopTitleAlert(): void {
+    if (this.titleBlinkInterval) {
+      clearInterval(this.titleBlinkInterval);
+      this.titleBlinkInterval = null;
+    }
+    document.title = this.originalDocumentTitle;
+  }
+
+  // -------------------------------------------------------------
+  // Message Selection & Deletion Handlers
+  // -------------------------------------------------------------
+  toggleSelectionMode(): void {
+    this.isSelectionMode = !this.isSelectionMode;
+    if (!this.isSelectionMode) {
+      this.selectedMessageIds.clear();
+    }
+  }
+
+  toggleMessageSelection(msgId: string, event?: Event): void {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (this.selectedMessageIds.has(msgId)) {
+      this.selectedMessageIds.delete(msgId);
+      if (this.selectedMessageIds.size === 0) {
+        this.isSelectionMode = false;
+      }
+    } else {
+      this.selectedMessageIds.add(msgId);
+      this.isSelectionMode = true;
+    }
+  }
+
+  isMessageSelected(msgId: string): boolean {
+    return this.selectedMessageIds.has(msgId);
+  }
+
+  selectAllMessages(): void {
+    this.isSelectionMode = true;
+    this.messages.forEach(m => {
+      if (!m.isSystem) {
+        this.selectedMessageIds.add(m.id);
+      }
+    });
+  }
+
+  cancelSelection(): void {
+    this.isSelectionMode = false;
+    this.selectedMessageIds.clear();
+  }
+
+  confirmDeleteSingleMessage(msg: DisplayMessage, event?: Event): void {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    const snackRef = this.snackBar.open(
+      'Delete this message?',
+      'DELETE',
+      {
+        duration: 4000,
+        verticalPosition: 'top',
+        horizontalPosition: 'center',
+        panelClass: ['warning-snackbar', 'danger-snackbar']
+      }
+    );
+
+    snackRef.onAction().subscribe(async () => {
+      await this.executeDeleteMessages([msg.id]);
+    });
+  }
+
+  deleteSelectedMessages(): void {
+    if (this.selectedMessageIds.size === 0) return;
+    const ids = Array.from(this.selectedMessageIds);
+    const count = ids.length;
+
+    const snackRef = this.snackBar.open(
+      `Delete ${count} selected message${count > 1 ? 's' : ''}?`,
+      'DELETE ALL',
+      {
+        duration: 5000,
+        verticalPosition: 'top',
+        horizontalPosition: 'center',
+        panelClass: ['warning-snackbar', 'danger-snackbar']
+      }
+    );
+
+    snackRef.onAction().subscribe(async () => {
+      await this.executeDeleteMessages(ids);
+    });
+  }
+
+  async executeDeleteMessages(ids: string[]): Promise<void> {
+    const res = await this.socketService.deleteMessages(ids);
+    if (res?.ok) {
+      this.handleMessagesDeleted(ids);
+      this.showWarning(`${ids.length} message${ids.length > 1 ? 's' : ''} deleted.`);
+    } else {
+      this.showWarning('Could not delete messages.');
+    }
+  }
+
+  private handleMessagesDeleted(ids: string[]): void {
+    const idSet = new Set(ids);
+    this.messages = this.messages.filter(m => !idSet.has(m.id));
+    this.allSortedHistory = this.allSortedHistory.filter(m => !idSet.has(m.id));
+    this.storageService.deleteLocalMessages(ids);
+
+    ids.forEach(id => {
+      const ep = this.ephemeralBlobs.get(id);
+      if (ep) {
+        URL.revokeObjectURL(ep.blobUrl);
+        this.ephemeralBlobs.delete(id);
+      }
+      this.selectedMessageIds.delete(id);
+    });
+
+    if (this.selectedMessageIds.size === 0) {
+      this.isSelectionMode = false;
+    }
   }
 
   leaveRoom(): void {
@@ -1338,7 +1586,8 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 }
 
-  private scrollToBottom(instant = false): void {
+  public scrollToBottom(instant = false): void {
+    this.showScrollToBottomPill = false;
     setTimeout(() => {
       if (this.messagesContainer?.nativeElement) {
         if (instant) {

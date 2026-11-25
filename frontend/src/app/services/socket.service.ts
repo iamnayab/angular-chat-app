@@ -19,6 +19,7 @@ export class SocketService {
   public roomCount$ = new Subject<number>();
   public typing$ = new Subject<{ role: Role; isTyping: boolean }>();
   public chatCleared$ = new Subject<void>();
+  public messagesDeleted$ = new Subject<{ messageIds: string[] }>();
 
   // Attachment Observables
   public attachmentStart$ = new Subject<AttachmentMeta>();
@@ -64,6 +65,7 @@ export class SocketService {
     this.socket.on('room-count', (count: number) => this.roomCount$.next(count));
     this.socket.on('typing', (data: { role: Role; isTyping: boolean }) => this.typing$.next(data));
     this.socket.on('chat-cleared', () => this.chatCleared$.next());
+    this.socket.on('messages-deleted', (data: { messageIds: string[] }) => this.messagesDeleted$.next(data));
 
     // Attachment listeners
     this.socket.on('attachment:start', (meta: AttachmentMeta) => this.attachmentStart$.next(meta));
@@ -127,6 +129,14 @@ export class SocketService {
   clearRoom(): Promise<{ ok: boolean; error?: string }> {
     return new Promise((resolve) => {
       this.socket.emit('clear-room', (res: { ok: boolean; error?: string }) => {
+        resolve(res || { ok: false });
+      });
+    });
+  }
+
+  deleteMessages(messageIds: string[]): Promise<{ ok: boolean; deletedCount?: number; error?: string }> {
+    return new Promise((resolve) => {
+      this.socket.emit('delete-messages', { messageIds }, (res: { ok: boolean; deletedCount?: number; error?: string }) => {
         resolve(res || { ok: false });
       });
     });

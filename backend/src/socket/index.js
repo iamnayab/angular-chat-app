@@ -16,6 +16,7 @@ const {
   saveUserLastSeen,
   getAllUserStatus,
   clearRoomMessages,
+  deleteMessages,
   saveFcmToken
 } = require("../database/database");
 const { sendPushNotification } = require("../services/fcmService");
@@ -487,6 +488,27 @@ function setupSocketIO(httpServer) {
       io.to(roomId).emit("chat-cleared");
       console.log(`🗑️ [Socket] Chat history cleared by ${socket.data.role}.`);
       reply({ ok: true });
+    });
+
+    /**
+     * Delete Selected Messages
+     */
+    socket.on("delete-messages", async (data, reply = () => {}) => {
+      const roomId = socket.data.roomId;
+      if (!roomId) return reply({ ok: false, error: "Not in room." });
+
+      const messageIds = Array.isArray(data?.messageIds)
+        ? data.messageIds
+        : (data?.id ? [data.id] : []);
+
+      if (messageIds.length === 0) {
+        return reply({ ok: false, error: "No messages specified for deletion." });
+      }
+
+      await deleteMessages(roomId, messageIds);
+      io.to(roomId).emit("messages-deleted", { messageIds });
+      console.log(`🗑️ [Socket] ${messageIds.length} message(s) deleted by ${socket.data.role}.`);
+      reply({ ok: true, deletedCount: messageIds.length });
     });
 
     /**

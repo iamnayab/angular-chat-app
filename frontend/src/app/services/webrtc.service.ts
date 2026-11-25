@@ -266,13 +266,16 @@ export class WebRtcService {
     this.remoteStream$.next(this.remoteStream);
 
     this.peerConnection.ontrack = (event) => {
+      console.log('WebRTC ontrack received:', event.track.kind);
       if (event.streams && event.streams[0]) {
         this.remoteStream = event.streams[0];
       } else {
         if (!this.remoteStream) this.remoteStream = new MediaStream();
-        this.remoteStream.addTrack(event.track);
+        if (!this.remoteStream.getTracks().some(t => t.id === event.track.id)) {
+          this.remoteStream.addTrack(event.track);
+        }
       }
-      this.remoteStream$.next(this.remoteStream);
+      this.remoteStream$.next(new MediaStream(this.remoteStream.getTracks()));
     };
 
     this.peerConnection.onicecandidate = (event) => {

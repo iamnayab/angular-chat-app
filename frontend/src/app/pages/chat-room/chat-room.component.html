@@ -8,6 +8,20 @@
     </div>
 
     <div class="chat-actions">
+      <!-- Select & Delete Mode Button -->
+      <button
+        class="action-icon-btn select-action-btn"
+        [class.active-mode]="isSelectionMode"
+        type="button"
+        [title]="isSelectionMode ? 'Exit Selection Mode' : 'Select Messages to Delete'"
+        (click)="toggleSelectionMode()"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 11 12 14 22 4"></polyline>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+        </svg>
+      </button>
+
       <!-- Audio Call Button -->
       <button class="action-icon-btn call-action-btn" type="button" title="Voice Call" (click)="startCall('audio')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -27,7 +41,7 @@
       </button>
 
       <!-- Clear Chat Button -->
-      <button class="action-icon-btn clear-action-btn" type="button" title="Clear Chat History" (click)="clearChat()">
+      <button class="action-icon-btn clear-action-btn" type="button" title="Clear Chat History (Permanently)" (click)="clearChat()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6" />
@@ -47,6 +61,32 @@
     </div>
   </div>
 
+  <!-- Multi-select Action Bar -->
+  @if (isSelectionMode || selectedMessageIds.size > 0) {
+    <div class="selection-action-bar">
+      <div class="selection-count-info">
+        <span class="selection-badge">{{ selectedMessageIds.size }}</span>
+        <span>selected</span>
+      </div>
+      <div class="selection-actions">
+        <button type="button" class="sel-btn sel-btn-select-all" (click)="selectAllMessages()">
+          Select All
+        </button>
+        <button
+          type="button"
+          class="sel-btn sel-btn-delete"
+          [disabled]="selectedMessageIds.size === 0"
+          (click)="deleteSelectedMessages()"
+        >
+          🗑️ Delete ({{ selectedMessageIds.size }})
+        </button>
+        <button type="button" class="sel-btn sel-btn-cancel" (click)="cancelSelection()">
+          ✕ Cancel
+        </button>
+      </div>
+    </div>
+  }
+
   <div class="room-meta">
     <span>{{ peopleCount }} / 2 connected</span>
     <span class="presence-tag" [style.color]="isPartnerOnline ? '#10b981' : '#94a3b8'">
@@ -55,6 +95,9 @@
         {{ connectionText }}
       </span>
     </span>
+    @if (unreadCount > 0) {
+      <span class="unread-meta-badge">{{ unreadCount }} unread</span>
+    }
   </div>
 
   <!-- Messages Area with Lazy Pagination -->
@@ -78,166 +121,218 @@
     }
 
     @for (msg of messages; track msg.id) {
-    @if (msg.isSystem) {
-    <div class="system-note">{{ msg.text }}</div>
-    } @else {
-    <div [id]="'msg-' + msg.id" class="bubble-row" [class.mine-row]="msg.senderRole === myRole"
-      [class.theirs-row]="msg.senderRole !== myRole">
-      <!-- WhatsApp Swipe-to-reply reveal indicator -->
-      @if (activeSwipeMsgId === msg.id && swipeOffset > 15) {
-      <div class="swipe-reply-hint">
-        ↩️
-      </div>
+      <!-- Unread Messages Divider Indicator -->
+      @if (msg.id === firstUnreadMessageId) {
+        <div class="unread-separator">
+          <div class="unread-pill">
+            <span>⚡ Unread Messages ({{ unreadCount }})</span>
+          </div>
+        </div>
       }
 
-      <div class="bubble" [class.mine]="msg.senderRole === myRole" [class.theirs]="msg.senderRole !== myRole"
-        [class.role-he]="msg.senderRole === 'he'" [class.role-she]="msg.senderRole === 'she'"
-        [style.transform]="activeSwipeMsgId === msg.id && swipeOffset > 0 ? 'translateX(' + swipeOffset + 'px)' : ''"
-        (touchstart)="onTouchStart($event, msg)" (touchmove)="onTouchMove($event, msg)"
-        (touchend)="onTouchEnd($event, msg)">
-        <!-- Sender label and action tools -->
-        <div class="bubble-header-row">
-          <span class="sender-label">
-            {{ msg.senderRole === 'he' ? 'Harry' : 'Elira' }}
-          </span>
+      @if (msg.isSystem) {
+        <div class="system-note">{{ msg.text }}</div>
+      } @else {
+        <div
+          [id]="'msg-' + msg.id"
+          class="bubble-row"
+          [class.mine-row]="msg.senderRole === myRole"
+          [class.theirs-row]="msg.senderRole !== myRole"
+          [class.is-selected]="isMessageSelected(msg.id)"
+          [class.selection-active]="isSelectionMode"
+          (click)="isSelectionMode ? toggleMessageSelection(msg.id, $event) : null"
+        >
+          <!-- Multi-select checkbox indicator -->
+          @if (isSelectionMode) {
+            <div
+              class="selection-checkbox"
+              [class.checked]="isMessageSelected(msg.id)"
+              (click)="toggleMessageSelection(msg.id, $event)"
+            >
+              @if (isMessageSelected(msg.id)) {
+                <span>✓</span>
+              }
+            </div>
+          }
 
-          <!-- Hover/Action buttons (Reply & Edit) -->
-          <div class="bubble-actions">
-            <button type="button" class="bubble-action-btn" title="Reply (or swipe right)" (click)="setReplyTo(msg)">
+          <!-- WhatsApp Swipe-to-reply reveal indicator -->
+          @if (!isSelectionMode && activeSwipeMsgId === msg.id && swipeOffset > 15) {
+            <div class="swipe-reply-hint">
               ↩️
-            </button>
-            @if (msg.senderRole === myRole && !msg.isSystem) {
-            <button type="button" class="bubble-action-btn" [title]="msg.isAttachment ? 'Edit Caption' : 'Edit Message'"
-              (click)="startEdit(msg)">
-              ✏️
-            </button>
-            }
-          </div>
-        </div>
-
-        <!-- WhatsApp Style Quoted Reply Preview -->
-        @if (msg.replyTo) {
-        <div class="quoted-reply-box" [class.quote-he]="msg.replyTo.senderRole === 'he'"
-          [class.quote-she]="msg.replyTo.senderRole === 'she'" (click)="scrollToMessage(msg.replyTo.id)">
-          <div class="quoted-sender">
-            {{ msg.replyTo.senderRole === 'he' ? 'Harry' : 'Elira' }}
-          </div>
-          <div class="quoted-snippet">{{ msg.replyTo.text }}</div>
-        </div>
-        }
-
-        <!-- Regular text message -->
-        @if (!msg.isAttachment) {
-        <div class="content">{{ msg.text }}</div>
-        }
-
-        <!-- Ephemeral Attachment Message -->
-        @if (msg.isAttachment && msg.attachment) {
-        <div class="content">
-          <div class="attachment-card">
-            <!-- Progress bar when transferring -->
-            @if (!msg.attachment.isComplete && !msg.attachment.error) {
-            <div class="attachment-progress-wrap">
-              <div class="attachment-progress-text">
-                <span>{{ msg.attachment.statusText }}</span>
-                <span>{{ msg.attachment.progress }}%</span>
-              </div>
-              <div class="attachment-progress-bar">
-                <div class="attachment-progress-fill" [style.width.%]="msg.attachment.progress"></div>
-              </div>
             </div>
-            }
-
-            <!-- Error state -->
-            @if (msg.attachment.error) {
-            <div class="error" style="text-align: left; margin: 4px 0;">
-              ⚠️ {{ msg.attachment.error }}
-            </div>
-            }
-
-            <!-- Completed Image Attachment (WhatsApp Style) -->
-            @if (msg.attachment.blobUrl && msg.attachment.meta.isImage) {
-            <div class="attachment-img-container" title="Click to view & zoom"
-              (click)="openLightbox(msg.attachment.blobUrl, msg.attachment.meta.fileName)">
-              <img class="attachment-img-thumb" [src]="msg.attachment.blobUrl" [alt]="msg.attachment.meta.fileName"
-                loading="lazy" />
-            </div>
-            @if (msg.text) {
-            <div class="attachment-caption-text">{{ msg.text }}</div>
-            }
-            }
-
-            <!-- Completed File Attachment -->
-            @if (msg.attachment.isComplete && !msg.attachment.meta.isImage) {
-            <div class="attachment-file-bubble">
-              <div class="attachment-file-bubble-icon">
-                {{ getFileEmoji(msg.attachment.meta.fileType, msg.attachment.meta.fileName) }}
-              </div>
-              <div class="attachment-file-bubble-info">
-                <div class="attachment-file-bubble-name">{{ msg.attachment.meta.fileName }}</div>
-                <div class="attachment-file-bubble-size">{{ formatBytes(msg.attachment.meta.fileSize) }}</div>
-              </div>
-            </div>
-            }
-          </div>
-        </div>
-        }
-
-        <!-- Time & Seen Status & Edited Indicator -->
-        <time [title]="formatFullDateTime(msg.sentAt)">
-          @if (msg.isEdited) {
-          <span class="edited-tag">(edited)</span>
           }
-          <span>{{ formatMessageDateTime(msg.sentAt) }}</span>
-          @if (msg.senderRole === myRole) {
-          <span class="seen-status" [class.is-seen]="msg.seen">
-            {{ msg.seen ? '✓✓ Seen' : (isPartnerOnline ? '✓✓' : '✓') }}
-          </span>
-          }
-        </time>
-      </div>
-    </div>
-    }
+
+          <div
+            class="bubble"
+            [class.mine]="msg.senderRole === myRole"
+            [class.theirs]="msg.senderRole !== myRole"
+            [class.role-he]="msg.senderRole === 'he'"
+            [class.role-she]="msg.senderRole === 'she'"
+            [style.transform]="!isSelectionMode && activeSwipeMsgId === msg.id && swipeOffset > 0 ? 'translateX(' + swipeOffset + 'px)' : ''"
+            (touchstart)="onTouchStart($event, msg)"
+            (touchmove)="onTouchMove($event, msg)"
+            (touchend)="onTouchEnd($event, msg)"
+          >
+            <!-- Sender label and action tools -->
+            <div class="bubble-header-row">
+              <span class="sender-label">
+                {{ msg.senderRole === 'he' ? 'Harry' : 'Elira' }}
+              </span>
+
+              <!-- Hover/Action buttons (Reply, Edit, Delete) -->
+              @if (!isSelectionMode) {
+                <div class="bubble-actions">
+                  <button type="button" class="bubble-action-btn" title="Reply (or swipe right)" (click)="setReplyTo(msg)">
+                    ↩️
+                  </button>
+                  @if (msg.senderRole === myRole && !msg.isSystem) {
+                    <button type="button" class="bubble-action-btn" [title]="msg.isAttachment ? 'Edit Caption' : 'Edit Message'"
+                      (click)="startEdit(msg)">
+                      ✏️
+                    </button>
+                  }
+                  <button
+                    type="button"
+                    class="bubble-action-btn btn-delete-bubble"
+                    title="Delete message"
+                    (click)="confirmDeleteSingleMessage(msg, $event)"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              }
+            </div>
+
+            <!-- WhatsApp Style Quoted Reply Preview -->
+            @if (msg.replyTo) {
+              <div class="quoted-reply-box" [class.quote-he]="msg.replyTo.senderRole === 'he'"
+                [class.quote-she]="msg.replyTo.senderRole === 'she'" (click)="scrollToMessage(msg.replyTo.id)">
+                <div class="quoted-sender">
+                  {{ msg.replyTo.senderRole === 'he' ? 'Harry' : 'Elira' }}
+                </div>
+                <div class="quoted-snippet">{{ msg.replyTo.text }}</div>
+              </div>
+            }
+
+            <!-- Regular text message -->
+            @if (!msg.isAttachment) {
+              <div class="content">{{ msg.text }}</div>
+            }
+
+            <!-- Ephemeral Attachment Message -->
+            @if (msg.isAttachment && msg.attachment) {
+              <div class="content">
+                <div class="attachment-card">
+                  <!-- Progress bar when transferring -->
+                  @if (!msg.attachment.isComplete && !msg.attachment.error) {
+                    <div class="attachment-progress-wrap">
+                      <div class="attachment-progress-text">
+                        <span>{{ msg.attachment.statusText }}</span>
+                        <span>{{ msg.attachment.progress }}%</span>
+                      </div>
+                      <div class="attachment-progress-bar">
+                        <div class="attachment-progress-fill" [style.width.%]="msg.attachment.progress"></div>
+                      </div>
+                    </div>
+                  }
+
+                  <!-- Error state -->
+                  @if (msg.attachment.error) {
+                    <div class="error" style="text-align: left; margin: 4px 0;">
+                      ⚠️ {{ msg.attachment.error }}
+                    </div>
+                  }
+
+                  <!-- Completed Image Attachment (WhatsApp Style) -->
+                  @if (msg.attachment.blobUrl && msg.attachment.meta.isImage) {
+                    <div class="attachment-img-container" title="Click to view & zoom"
+                      (click)="openLightbox(msg.attachment.blobUrl, msg.attachment.meta.fileName)">
+                      <img class="attachment-img-thumb" [src]="msg.attachment.blobUrl" [alt]="msg.attachment.meta.fileName"
+                        loading="lazy" />
+                    </div>
+                    @if (msg.text) {
+                      <div class="attachment-caption-text">{{ msg.text }}</div>
+                    }
+                  }
+
+                  <!-- Completed File Attachment -->
+                  @if (msg.attachment.isComplete && !msg.attachment.meta.isImage) {
+                    <div class="attachment-file-bubble">
+                      <div class="attachment-file-bubble-icon">
+                        {{ getFileEmoji(msg.attachment.meta.fileType, msg.attachment.meta.fileName) }}
+                      </div>
+                      <div class="attachment-file-bubble-info">
+                        <div class="attachment-file-bubble-name">{{ msg.attachment.meta.fileName }}</div>
+                        <div class="attachment-file-bubble-size">{{ formatBytes(msg.attachment.meta.fileSize) }}</div>
+                      </div>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+
+            <!-- Time & Seen Status & Edited Indicator -->
+            <time [title]="formatFullDateTime(msg.sentAt)">
+              @if (msg.isEdited) {
+                <span class="edited-tag">(edited)</span>
+              }
+              <span>{{ formatMessageDateTime(msg.sentAt) }}</span>
+              @if (msg.senderRole === myRole) {
+                <span class="seen-status" [class.is-seen]="msg.seen">
+                  {{ msg.seen ? '✓✓ Seen' : (isPartnerOnline ? '✓✓' : '✓') }}
+                </span>
+              }
+            </time>
+          </div>
+        </div>
+      }
     }
   </div>
+
+  <!-- Floating Scroll-to-Bottom Pill with Unread Count -->
+  @if (showScrollToBottomPill) {
+    <button type="button" class="scroll-bottom-pill" (click)="scrollToBottom(true)">
+      <span>↓ {{ unreadCount > 0 ? unreadCount + ' new message' + (unreadCount > 1 ? 's' : '') : 'Latest messages' }}</span>
+    </button>
+  }
 
   <!-- Typing Indicator -->
   @if (isTypingIndicatorVisible) {
-  <div class="typing-indicator" aria-live="polite">
-    <div class="typing-content">
-      <span>{{ typingPartnerName }} is typing</span>
-      <div class="typing-dots">
-        <span></span><span></span><span></span>
+    <div class="typing-indicator" aria-live="polite">
+      <div class="typing-content">
+        <span>{{ typingPartnerName }} is typing</span>
+        <div class="typing-dots">
+          <span></span><span></span><span></span>
+        </div>
       </div>
     </div>
-  </div>
   }
 
   <!-- Replying Banner (WhatsApp Style) -->
   @if (replyingTo) {
-  <div class="reply-preview-bar">
-    <div class="reply-bar-accent" [class.accent-he]="replyingTo.senderRole === 'he'"
-      [class.accent-she]="replyingTo.senderRole === 'she'"></div>
-    <div class="reply-bar-content">
-      <div class="reply-bar-title">
-        Replying to <strong>{{ replyingTo.senderRole === 'he' ? 'Harry' : 'Elira' }}</strong>
+    <div class="reply-preview-bar">
+      <div class="reply-bar-accent" [class.accent-he]="replyingTo.senderRole === 'he'"
+        [class.accent-she]="replyingTo.senderRole === 'she'"></div>
+      <div class="reply-bar-content">
+        <div class="reply-bar-title">
+          Replying to <strong>{{ replyingTo.senderRole === 'he' ? 'Harry' : 'Elira' }}</strong>
+        </div>
+        <div class="reply-bar-snippet">{{ replyingTo.text }}</div>
       </div>
-      <div class="reply-bar-snippet">{{ replyingTo.text }}</div>
+      <button type="button" class="reply-bar-cancel" title="Cancel Reply" (click)="cancelReply()">✕</button>
     </div>
-    <button type="button" class="reply-bar-cancel" title="Cancel Reply" (click)="cancelReply()">✕</button>
-  </div>
   }
 
   <!-- Editing Message Banner -->
   @if (editingMessage) {
-  <div class="edit-preview-bar">
-    <div class="edit-bar-icon">✏️</div>
-    <div class="edit-bar-content">
-      <div class="edit-bar-title">{{ editingMessage.isAttachment ? 'Editing photo caption' : 'Editing message' }}</div>
-      <div class="edit-bar-snippet">{{ editingMessage.text || '(No caption)' }}</div>
+    <div class="edit-preview-bar">
+      <div class="edit-bar-icon">✏️</div>
+      <div class="edit-bar-content">
+        <div class="edit-bar-title">{{ editingMessage.isAttachment ? 'Editing photo caption' : 'Editing message' }}</div>
+        <div class="edit-bar-snippet">{{ editingMessage.text || '(No caption)' }}</div>
+      </div>
+      <button type="button" class="reply-bar-cancel" title="Cancel Edit" (click)="cancelEdit()">✕</button>
     </div>
-    <button type="button" class="reply-bar-cancel" title="Cancel Edit" (click)="cancelEdit()">✕</button>
-  </div>
   }
 
   <!-- Composer Form -->
@@ -260,8 +355,7 @@
     </button>
   </form>
   <div class="composer-note">
-    {{ editingMessage ? 'Enter to save changes • Esc to cancel' : 'Enter to send • Swipe right to reply • AES-256
-    encrypted' }}
+    {{ editingMessage ? 'Enter to save changes • Esc to cancel' : 'Enter to send • Swipe right to reply • AES-256 encrypted' }}
   </div>
 </section>
 

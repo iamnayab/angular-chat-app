@@ -556,18 +556,47 @@ async function clearRoomMessages(roomId) {
 
   if (usePostgres && pgPool) {
     try {
-      await pgPool.query(`DELETE FROM messages WHERE room_id = $1`, [targetRoomId]);
-      await pgPool.query(`DELETE FROM attachments WHERE room_id = $1`, [targetRoomId]);
+      await pgPool.query(`DELETE FROM messages WHERE LOWER(TRIM(room_id)) = LOWER(TRIM($1))`, [targetRoomId]);
+      await pgPool.query(`DELETE FROM attachments WHERE LOWER(TRIM(room_id)) = LOWER(TRIM($1))`, [targetRoomId]);
     } catch (err) {
       console.error("❌ Postgres clear messages error:", err.message);
     }
   }
 
   loadLocalDb();
-  localDb.messages = (localDb.messages || []).filter(m => String(m.roomId).trim() !== targetRoomId);
-  localDb.attachments = (localDb.attachments || []).filter(a => String(a.roomId).trim() !== targetRoomId);
+  localDb.messages = (localDb.messages || []).filter(m => String(m.roomId || '').trim().toLowerCase() !== targetRoomId.toLowerCase());
+  localDb.attachments = (localDb.attachments || []).filter(a => String(a.roomId || '').trim().toLowerCase() !== targetRoomId.toLowerCase());
   persistLocalDb();
   return true;
+}
+
+async function deleteMessages(roomId, messageIds) {
+  if (!Array.isArray(messageIds) || messageIds.length === 0) return { success: false };
+  const targetRoomId = String(roomId || "0202").trim();
+  const cleanIds = messageIds.map(id => String(id).trim()).filter(Boolean);
+  if (cleanIds.length === 0) return { success: false };
+
+  if (usePostgres && pgPool) {
+    try {
+      await pgPool.query(
+        `DELETE FROM messages WHERE LOWER(TRIM(room_id)) = LOWER(TRIM($1)) AND id = ANY($2::text[])`,
+        [targetRoomId, cleanIds]
+      );
+      await pgPool.query(
+        `DELETE FROM attachments WHERE LOWER(TRIM(room_id)) = LOWER(TRIM($1)) AND id = ANY($2::text[])`,
+        [targetRoomId, cleanIds]
+      );
+    } catch (err) {
+      console.error("❌ Postgres delete messages error:", err.message);
+    }
+  }
+
+  loadLocalDb();
+  const idSet = new Set(cleanIds);
+  localDb.messages = (localDb.messages || []).filter(m => !(String(m.roomId || '').trim().toLowerCase() === targetRoomId.toLowerCase() && idSet.has(m.id)));
+  localDb.attachments = (localDb.attachments || []).filter(a => !(String(a.roomId || '').trim().toLowerCase() === targetRoomId.toLowerCase() && idSet.has(a.id)));
+  persistLocalDb();
+  return { success: true };
 }
 
 async function saveFcmToken(roomId, role, token) {
@@ -636,6 +665,7 @@ module.exports = {
   saveUserLastSeen,
   getAllUserStatus,
   clearRoomMessages,
+  deleteMessages,
   saveFcmToken,
   getFcmToken,
   getDatabaseStatus

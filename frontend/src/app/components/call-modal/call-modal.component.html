@@ -39,31 +39,80 @@
   </div>
 }
 
-<!-- Active Call Overlay (Audio / Video) -->
+<!-- Active Call Container (Audio / Video) - Floating or Fullscreen -->
 @if (activeCall && (activeCall.status === 'calling' || activeCall.status === 'connected')) {
-  <div class="active-call-overlay">
-    <!-- Dedicated Remote Audio Receiver (Muted until officially answered to avoid audio leak) -->
+  <div
+    #floatingContainer
+    class="active-call-container"
+    [class.floating-mode]="isFloating"
+    [class.fullscreen-mode]="!isFloating"
+    [class.audio-floating]="isFloating && !activeCall.isVideo"
+    [class.video-floating]="isFloating && activeCall.isVideo"
+    [class.is-dragging]="isDragging"
+    [style.left.px]="isFloating && floatingLeft !== null ? floatingLeft : null"
+    [style.top.px]="isFloating && floatingTop !== null ? floatingTop : null"
+    (mousedown)="onDragStart($event)"
+    (touchstart)="onDragStart($event)"
+  >
+    <!-- Dedicated Remote Audio Receiver (Muted until connected, plays sound without video echo) -->
     <audio #remoteAudioRef autoplay playsinline [muted]="activeCall.status !== 'connected'"></audio>
 
-    <!-- Call Header Info -->
+    <!-- Header Dock / Drag Handle -->
     <div class="call-header-dock">
       <div class="call-party-info">
+        <span class="call-drag-indicator" *ngIf="isFloating" title="Drag to reposition">⋮⋮</span>
         <span class="call-party-name">{{ activeCall.partnerName }}</span>
         <span class="call-status-badge">
           {{ activeCall.status === 'calling' ? 'Calling…' : webrtcService.formatDuration(activeCall.durationSeconds) }}
         </span>
       </div>
-      <div class="call-type-indicator">
-        {{ activeCall.isVideo ? '📹 HD Video' : '📞 Crystal Audio' }}
+
+      <div class="call-dock-actions">
+        <!-- Floating / Fullscreen Toggle -->
+        <button
+          type="button"
+          class="call-dock-toggle-btn"
+          [title]="isFloating ? 'Maximize Full Screen' : 'Minimize to Floating Window (Chat while calling)'"
+          (click)="toggleFloating()"
+        >
+          @if (isFloating) {
+            <!-- Maximize Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+            </svg>
+          } @else {
+            <!-- Minimize / Picture-in-Picture Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>
+            </svg>
+          }
+        </button>
       </div>
     </div>
 
-    <!-- Remote Stream Area -->
-    <div class="call-video-stage">
+    <!-- Video Stage / Audio Stage -->
+    <div class="call-stage-area">
       @if (activeCall.isVideo) {
-        <video #remoteVideoRef class="remote-video-feed" autoplay playsinline [muted]="activeCall.status !== 'connected'"></video>
+        @if (activeCall.status === 'calling') {
+          <div class="video-calling-placeholder">
+            <div class="video-calling-avatar pulse-anim">
+              {{ activeCall.partnerRole === 'he' ? '💙' : '❤️' }}
+            </div>
+            <div class="video-calling-status">Calling {{ activeCall.partnerName }}…</div>
+            <div class="video-calling-sub">Ringing partner device</div>
+          </div>
+        }
+
+        <!-- Remote Video (Always muted to prevent double playback, audio is handled by dedicated remoteAudioRef) -->
+        <video #remoteVideoRef class="remote-video-feed" [class.hidden-feed]="activeCall.status === 'calling'" autoplay playsinline [muted]="true"></video>
+
+        <!-- Local Self Video (Strictly muted to prevent hearing own voice) -->
+        <div class="local-pip-container" [class.pip-hidden]="!activeCall.isVideoEnabled">
+          <video #localVideoRef class="local-video-feed" autoplay playsinline [muted]="true"></video>
+          <div class="pip-label">You</div>
+        </div>
       } @else {
-        <!-- Audio Call Wave Animation -->
+        <!-- Audio Call Visualizer Stage -->
         <div class="audio-call-stage">
           <div class="audio-caller-avatar">
             {{ activeCall.partnerRole === 'he' ? '💙' : '❤️' }}
@@ -75,22 +124,14 @@
             <span class="wave-bar"></span>
             <span class="wave-bar"></span>
           </div>
-          <p class="audio-call-hint">
+          <p class="audio-call-hint" *ngIf="!isFloating">
             {{ activeCall.status === 'connected' ? 'Secure Peer-to-Peer Voice Call Connected' : 'Connecting to Partner…' }}
           </p>
         </div>
       }
-
-      <!-- Local Picture-in-Picture Video -->
-      @if (activeCall.isVideo) {
-        <div class="local-pip-container" [class.pip-hidden]="!activeCall.isVideoEnabled">
-          <video #localVideoRef class="local-video-feed" autoplay playsinline muted></video>
-          <div class="pip-label">You</div>
-        </div>
-      }
     </div>
 
-    <!-- Call Floating Controls Dock -->
+    <!-- Call Controls Dock -->
     <div class="call-controls-dock">
       <!-- Mic Mute Button -->
       <button
@@ -118,7 +159,7 @@
         }
       </button>
 
-      <!-- Video On/Off Button (if video call) -->
+      <!-- Video Camera Toggle Button (if video call) -->
       @if (activeCall.isVideo) {
         <button
           type="button"
@@ -140,6 +181,28 @@
           }
         </button>
       }
+
+      <!-- Float / Maximize Quick Toggle -->
+      <button
+        type="button"
+        class="call-control-btn"
+        [title]="isFloating ? 'Full Screen Call' : 'Float Call & Open Chat'"
+        (click)="toggleFloating()"
+      >
+        @if (isFloating) {
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        } @else {
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+            <rect x="12" y="12" width="6" height="6" rx="1" ry="1"></rect>
+          </svg>
+        }
+      </button>
 
       <!-- Hang Up Button -->
       <button

@@ -57,10 +57,22 @@ export class StorageService {
     } catch {}
   }
 
+  deleteLocalMessages(messageIds: string[]): void {
+    try {
+      const existing = this.getLocalMessages();
+      const idSet = new Set(messageIds);
+      const filtered = existing.filter(m => !idSet.has(m.id));
+      localStorage.setItem(this.STORAGE_CACHE_KEY, JSON.stringify(filtered));
+    } catch (e) {
+      console.warn('Could not delete messages from local cache:', e);
+    }
+  }
+
   clearLocalMessages(): void {
     try {
+      localStorage.removeItem(this.STORAGE_CACHE_KEY);
       Object.keys(localStorage).forEach(k => {
-        if (k.endsWith('_history')) {
+        if (k.endsWith('_history') || k.includes('history') || k.includes('private_space')) {
           localStorage.removeItem(k);
         }
       });
