@@ -4,10 +4,38 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class AudioService {
+  private soundEnabled: boolean = true;
+
+  constructor() {
+    try {
+      const saved = localStorage.getItem('qc_sound_enabled');
+      this.soundEnabled = saved !== 'false';
+    } catch {
+      this.soundEnabled = true;
+    }
+  }
+
+  isSoundEnabled(): boolean {
+    return this.soundEnabled;
+  }
+
+  setSoundEnabled(enabled: boolean): void {
+    this.soundEnabled = enabled;
+    try {
+      localStorage.setItem('qc_sound_enabled', enabled ? 'true' : 'false');
+    } catch {}
+  }
+
+  toggleSound(): boolean {
+    this.setSoundEnabled(!this.soundEnabled);
+    return this.soundEnabled;
+  }
+
   /**
    * Incoming Call Ringtone Chime
    */
   playRingChime(): void {
+    if (!this.soundEnabled) return;
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
@@ -37,6 +65,7 @@ export class AudioService {
    * Crisp, pleasant message notification chime (Telegram / Apple style pop-ding)
    */
   playMessageChime(): void {
+    if (!this.soundEnabled) return;
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;

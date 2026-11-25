@@ -17,7 +17,9 @@ const {
   getAllUserStatus,
   clearRoomMessages,
   deleteMessages,
-  saveFcmToken
+  saveFcmToken,
+  saveUserSettings,
+  getUserSettings
 } = require("../database/database");
 const { sendPushNotification } = require("../services/fcmService");
 const { initAttachmentRelay, clearRoomAttachments } = require("./attachmentRelay");
@@ -87,10 +89,11 @@ function setupSocketIO(httpServer) {
         const partnerOnline = Boolean(roomMembers.get(partnerRole));
 
         // Run independent DB queries in parallel for ultra-fast instant room entry
-        const [userStatuses, seenResult, history] = await Promise.all([
+        const [userStatuses, seenResult, history, userSettings] = await Promise.all([
           saveUserLastSeen(targetRoomId, role, now).then(() => getAllUserStatus(targetRoomId)),
           markMessagesAsSeen(targetRoomId, role),
-          getRoomMessages(targetRoomId, 1000)
+          getRoomMessages(targetRoomId, 1000),
+          getUserSettings(targetRoomId, role)
         ]);
         const seenAt = (seenResult && seenResult.seenAt) || now;
 
@@ -110,7 +113,8 @@ function setupSocketIO(httpServer) {
           partnerOnline,
           partnerLastSeen: userStatuses[partnerRole],
           myLastSeen: userStatuses[role],
-          history
+          history,
+          userSettings: userSettings || { soundEnabled: true, notificationsEnabled: true }
         });
       } catch (err) {
         console.error("❌ join-room handler error:", err.message);
@@ -509,6 +513,36 @@ function setupSocketIO(httpServer) {
       io.to(roomId).emit("messages-deleted", { messageIds });
       console.log(`🗑️ [Socket] ${messageIds.length} message(s) deleted by ${socket.data.role}.`);
       reply({ ok: true, deletedCount: messageIds.length });
+    });
+
+    /**
+     * User Settings Persistence (Notification Sound & Alerts saved in Database)
+     */
+    socket.on("update-settings", async (data, reply = () => {}) => {
+      const role = socket.data.role;
+      const roomId = socket.data.roomId || "0202";
+      if (!role) {
+        if (typeof reply === "function") reply({ ok: false, error: "Role not set." });
+        return;
+      }
+
+      const res = await saveUserSettings(roomId, role, {
+        soundEnabled: data?.soundEnabled,
+        notificationsEnabled: data?.notificationsEnabled
+      });
+      console.log(`⚙️ [Settings] ${role} in ${roomId} updated settings:`, res.settings);
+      if (typeof reply === "function") reply({ ok: true, settings: res.settings });
+    });
+
+    socket.on("get-settings", async (reply = () => {}) => {
+      const role = socket.data.role;
+      const roomId = socket.data.roomId || "0202";
+      if (!role) {
+        if (typeof reply === "function") reply({ ok: false, error: "Role not set." });
+        return;
+      }
+      const settings = await getUserSettings(roomId, role);
+      if (typeof reply === "function") reply({ ok: true, settings });
     });
 
     /**

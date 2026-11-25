@@ -36,9 +36,10 @@ function loadLocalDb() {
       if (!localDb.attachments) localDb.attachments = [];
       if (!localDb.userStatus) localDb.userStatus = {};
       if (!localDb.fcmTokens) localDb.fcmTokens = {};
+      if (!localDb.userSettings) localDb.userSettings = {};
     } catch (e) {
       console.warn("⚠️ Failed reading local db file, initializing fresh store:", e.message);
-      localDb = { messages: [], attachments: [], userStatus: {}, fcmTokens: {} };
+      localDb = { messages: [], attachments: [], userStatus: {}, fcmTokens: {}, userSettings: {} };
     }
   }
 }
@@ -173,6 +174,20 @@ async function initDatabase() {
               room_id VARCHAR(64) NOT NULL,
               role VARCHAR(32) NOT NULL,
               token TEXT NOT NULL,
+              updated_at BIGINT NOT NULL,
+              PRIMARY KEY (room_id, role)
+            )
+          `);
+        } catch (e) {}
+
+        // 5. User settings table (Sound and notification preferences persisted permanently)
+        try {
+          await client.query(`
+            CREATE TABLE IF NOT EXISTS user_settings (
+              room_id VARCHAR(64) NOT NULL,
+              role VARCHAR(32) NOT NULL,
+              sound_enabled BOOLEAN DEFAULT TRUE,
+              notifications_enabled BOOLEAN DEFAULT TRUE,
               updated_at BIGINT NOT NULL,
               PRIMARY KEY (room_id, role)
             )
@@ -647,6 +662,77 @@ async function getFcmToken(roomId, role) {
   return (item && item.token) || null;
 }
 
+async function saveUserSettings(roomId, role, { soundEnabled, notificationsEnabled }) {
+  const targetRoomId = String(roomId || "0202").trim();
+  const cleanRole = String(role || "he").trim().toLowerCase();
+  const now = Date.now();
+
+  const current = await getUserSettings(targetRoomId, cleanRole);
+  const newSound = soundEnabled !== undefined ? Boolean(soundEnabled) : current.soundEnabled;
+  const newNotif = notificationsEnabled !== undefined ? Boolean(notificationsEnabled) : current.notificationsEnabled;
+
+  if (usePostgres && pgPool) {
+    try {
+      await pgPool.query(
+        `INSERT INTO user_settings (room_id, role, sound_enabled, notifications_enabled, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (room_id, role) DO UPDATE SET
+           sound_enabled = EXCLUDED.sound_enabled,
+           notifications_enabled = EXCLUDED.notifications_enabled,
+           updated_at = EXCLUDED.updated_at`,
+        [targetRoomId, cleanRole, newSound, newNotif, now]
+      );
+    } catch (err) {
+      console.error("❌ Postgres save user settings error:", err.message);
+    }
+  }
+
+  loadLocalDb();
+  if (!localDb.userSettings) localDb.userSettings = {};
+  localDb.userSettings[`${targetRoomId}:${cleanRole}`] = {
+    soundEnabled: newSound,
+    notificationsEnabled: newNotif,
+    updatedAt: now
+  };
+  persistLocalDb();
+
+  return { success: true, settings: { soundEnabled: newSound, notificationsEnabled: newNotif } };
+}
+
+async function getUserSettings(roomId, role) {
+  const targetRoomId = String(roomId || "0202").trim();
+  const cleanRole = String(role || "he").trim().toLowerCase();
+
+  if (usePostgres && pgPool) {
+    try {
+      const res = await pgPool.query(
+        `SELECT sound_enabled, notifications_enabled FROM user_settings 
+         WHERE LOWER(TRIM(room_id)) = LOWER(TRIM($1)) AND LOWER(TRIM(role)) = LOWER(TRIM($2))`,
+        [targetRoomId, cleanRole]
+      );
+      if (res.rows && res.rows.length > 0) {
+        return {
+          soundEnabled: res.rows[0].sound_enabled !== false,
+          notificationsEnabled: res.rows[0].notifications_enabled !== false
+        };
+      }
+    } catch (err) {
+      console.error("❌ Postgres get user settings error:", err.message);
+    }
+  }
+
+  loadLocalDb();
+  const item = localDb.userSettings && localDb.userSettings[`${targetRoomId}:${cleanRole}`];
+  if (item) {
+    return {
+      soundEnabled: item.soundEnabled !== false,
+      notificationsEnabled: item.notificationsEnabled !== false
+    };
+  }
+
+  return { soundEnabled: true, notificationsEnabled: true };
+}
+
 function getDatabaseStatus() {
   return {
     usePostgres,
@@ -668,5 +754,7 @@ module.exports = {
   deleteMessages,
   saveFcmToken,
   getFcmToken,
+  saveUserSettings,
+  getUserSettings,
   getDatabaseStatus
 };

@@ -1,9 +1,21 @@
 {
   "messages": [],
   "userStatus": {
-    "0202:he": 1795602699324,
-    "0202:she": 1795602806276
+    "0202:he": 1795605054704,
+    "0202:she": 1795604527601
   },
   "fcmTokens": {},
-  "attachments": []
+  "attachments": [],
+  "userSettings": {
+    "test-room:he": {
+      "soundEnabled": true,
+      "notificationsEnabled": false,
+      "updatedAt": 1795605010294
+    },
+    "0202:he": {
+      "soundEnabled": true,
+      "notificationsEnabled": true,
+      "updatedAt": 1795605129751
+    }
+  }
 }

@@ -142,6 +142,22 @@ export class SocketService {
     });
   }
 
+  updateUserSettings(settings: { soundEnabled?: boolean; notificationsEnabled?: boolean }): Promise<{ ok: boolean; settings?: any }> {
+    return new Promise((resolve) => {
+      this.socket.emit('update-settings', settings, (res: { ok: boolean; settings?: any }) => {
+        resolve(res || { ok: false });
+      });
+    });
+  }
+
+  getUserSettings(): Promise<{ ok: boolean; settings?: { soundEnabled: boolean; notificationsEnabled: boolean } }> {
+    return new Promise((resolve) => {
+      this.socket.emit('get-settings', (res: { ok: boolean; settings?: { soundEnabled: boolean; notificationsEnabled: boolean } }) => {
+        resolve(res || { ok: false });
+      });
+    });
+  }
+
   // Ephemeral Attachment Relays
   startAttachment(meta: AttachmentMeta): Promise<{ ok: boolean; error?: string }> {
     return new Promise((resolve) => {

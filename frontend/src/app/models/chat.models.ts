@@ -70,6 +70,10 @@ export interface JoinRoomResponse {
   partnerLastSeen?: number | null;
   myLastSeen?: number | null;
   history?: EncryptedPayload[];
+  userSettings?: {
+    soundEnabled: boolean;
+    notificationsEnabled: boolean;
+  };
   error?: string;
 }
 

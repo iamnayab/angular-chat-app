@@ -71,6 +71,11 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   isSelectionMode = false;
   selectedMessageIds = new Set<string>();
 
+  // 3-Dot Options Menu & Notification Settings
+  isMenuOpen = false;
+  isSoundEnabled = true;
+  isNotificationsEnabled = true;
+
   // Chat messages
   messages: DisplayMessage[] = [];
   draftMessage = '';
@@ -152,6 +157,37 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // 1. Initialize settings from database (via initialData or fallback query)
+    if (this.initialData?.userSettings) {
+      this.isSoundEnabled = this.initialData.userSettings.soundEnabled !== false;
+      this.isNotificationsEnabled = this.initialData.userSettings.notificationsEnabled !== false;
+      this.audioService.setSoundEnabled(this.isSoundEnabled);
+      try {
+        localStorage.setItem('qc_sound_enabled', this.isSoundEnabled ? 'true' : 'false');
+        localStorage.setItem('qc_notifications_enabled', this.isNotificationsEnabled ? 'true' : 'false');
+      } catch {}
+    } else {
+      this.isSoundEnabled = this.audioService.isSoundEnabled();
+      try {
+        const savedNotif = localStorage.getItem('qc_notifications_enabled');
+        this.isNotificationsEnabled = savedNotif !== 'false';
+      } catch {
+        this.isNotificationsEnabled = true;
+      }
+
+      this.socketService.getUserSettings().then((res) => {
+        if (res?.ok && res.settings) {
+          this.isSoundEnabled = res.settings.soundEnabled !== false;
+          this.isNotificationsEnabled = res.settings.notificationsEnabled !== false;
+          this.audioService.setSoundEnabled(this.isSoundEnabled);
+          try {
+            localStorage.setItem('qc_sound_enabled', this.isSoundEnabled ? 'true' : 'false');
+            localStorage.setItem('qc_notifications_enabled', this.isNotificationsEnabled ? 'true' : 'false');
+          } catch {}
+        }
+      });
+    }
+
     this.setupSocketSubscriptions();
 
     if (this.initialData) {
@@ -206,11 +242,25 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
   @HostListener('document:keydown', ['$event'])
   handleKeyboardEvent(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
+      if (this.isMenuOpen) this.closeMenu();
       if (this.showLightbox) this.closeLightbox();
       if (this.showPreviewModal) this.closePreviewModal();
       if (this.editingMessage) this.cancelEdit();
       if (this.replyingTo) this.cancelReply();
     }
+  }
+
+  @HostListener('document:click', ['$event'])
+  @HostListener('document:touchstart', ['$event'])
+  handleOutsideInteraction(event: Event): void {
+    if (!this.isMenuOpen) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    // If the tap or click was inside the dropdown menu or on the 3-dot button, don't close here
+    if (target.closest('.chat-menu-dropdown') || target.closest('.menu-action-btn')) {
+      return;
+    }
+    this.closeMenu();
   }
 
   @HostListener('document:paste', ['$event'])
@@ -1081,7 +1131,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
       if (isScrolledUp) {
         this.showScrollToBottomPill = true;
       }
-      if (isDocHidden) {
+      if (isDocHidden && this.isNotificationsEnabled) {
         this.startTitleAlert(senderName);
         if ('Notification' in window && Notification.permission === 'granted') {
           try {
@@ -1233,6 +1283,102 @@ export class ChatRoomComponent implements OnInit, OnDestroy {
 
   leaveRoom(): void {
     this.leave.emit();
+  }
+
+  // -------------------------------------------------------------
+  // 3-Dot Options Menu & Notification Toggles
+  // -------------------------------------------------------------
+  toggleMenu(event?: Event): void {
+    if (event) event.stopPropagation();
+    this.isMenuOpen = !this.isMenuOpen;
+  }
+
+  closeMenu(): void {
+    this.isMenuOpen = false;
+  }
+
+  onMenuSelectMessages(): void {
+    this.closeMenu();
+    this.toggleSelectionMode();
+  }
+
+  onMenuToggleSound(): void {
+    this.isSoundEnabled = this.audioService.toggleSound();
+    try {
+      localStorage.setItem('qc_sound_enabled', this.isSoundEnabled ? 'true' : 'false');
+    } catch {}
+
+    // Persist permanently in database
+    this.socketService.updateUserSettings({ soundEnabled: this.isSoundEnabled });
+
+    this.snackBar.open(
+      this.isSoundEnabled ? '🔔 Notification sound turned ON (Saved in DB)' : '🔕 Notification sound MUTED (Saved in DB)',
+      'OK',
+      { duration: 2500, verticalPosition: 'top', horizontalPosition: 'center' }
+    );
+  }
+
+  async onMenuToggleNotifications(): Promise<void> {
+    if (!this.isNotificationsEnabled) {
+      if ('Notification' in window) {
+        if (Notification.permission === 'default') {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') {
+            this.snackBar.open('⚠️ Browser notification permission denied', 'OK', {
+              duration: 3000,
+              verticalPosition: 'top',
+              horizontalPosition: 'center'
+            });
+            return;
+          }
+        } else if (Notification.permission === 'denied') {
+          this.snackBar.open('⚠️ Notifications blocked in browser settings', 'OK', {
+            duration: 3000,
+            verticalPosition: 'top',
+            horizontalPosition: 'center'
+          });
+          return;
+        }
+      }
+      this.isNotificationsEnabled = true;
+      try {
+        localStorage.setItem('qc_notifications_enabled', 'true');
+      } catch {}
+
+      // Persist permanently in database
+      this.socketService.updateUserSettings({ notificationsEnabled: true });
+
+      this.snackBar.open('💬 Notifications turned ON (Saved in DB)', 'OK', {
+        duration: 2500,
+        verticalPosition: 'top',
+        horizontalPosition: 'center'
+      });
+    } else {
+      this.isNotificationsEnabled = false;
+      try {
+        localStorage.setItem('qc_notifications_enabled', 'false');
+      } catch {}
+      this.stopTitleAlert();
+
+      // Persist permanently in database
+      this.socketService.updateUserSettings({ notificationsEnabled: false });
+
+      this.snackBar.open('🔕 Notifications MUTED (Saved in DB)', 'OK', {
+        duration: 2500,
+        verticalPosition: 'top',
+        horizontalPosition: 'center'
+      });
+    }
+  }
+
+  onMenuClearChat(): void {
+    this.closeMenu();
+    this.clearChat();
+  }
+
+  onMenuLeaveRoom(): void {
+    this.closeMenu();
+    this.leaveRoom();
   }
 
   // -------------------------------------------------------------
