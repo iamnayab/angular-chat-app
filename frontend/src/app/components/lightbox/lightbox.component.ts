@@ -14,6 +14,7 @@ export class LightboxComponent {
   @Input() title = '';
 
   @Output() close = new EventEmitter<void>();
+  @Output() download = new EventEmitter<{ url: string; title: string }>();
 
   zoomLevel = 1;
   panX = 0;
@@ -28,6 +29,19 @@ export class LightboxComponent {
   private initialPinchZoom = 1;
 
   readonly Math = Math;
+
+  downloadImage(): void {
+    if (!this.imageUrl) return;
+    this.download.emit({ url: this.imageUrl, title: this.title });
+    const a = document.createElement('a');
+    a.href = this.imageUrl;
+    a.download = this.title || 'picture';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 100);
+  }
 
   onClose(): void {
     this.resetTransform();
